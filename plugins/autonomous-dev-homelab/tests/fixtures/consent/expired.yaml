@@ -1,0 +1,8 @@
+version: "1.0"
+consents:
+  - cidr: 192.168.1.0/24
+    approved_at: "2020-01-01T00:00:00Z"
+    expires_at: "2020-04-01T00:00:00Z"
+    permitted_ports: [443]
+    permitted_scan_types: [http_probe]
+    network_fingerprint: "route=192.168.1.1;dns=192.168.1.1"
