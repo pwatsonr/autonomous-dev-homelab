@@ -1,0 +1,15 @@
+version: "1.0"
+consents:
+  - cidr: 192.168.1.0/24
+    approved_at: "2026-04-28T10:00:00Z"
+    approved_by: "patrick@homelab"
+    expires_at: "2126-07-27T10:00:00Z"
+    permitted_ports: [22, 80, 443, 2375, 2376, 6443, 8006, 8443]
+    permitted_scan_types: [http_probe, ssh_probe, tcp_connect]
+    network_fingerprint: "route=192.168.1.1;dns=192.168.1.1"
+  - cidr: 10.10.0.0/16
+    approved_at: "2026-04-28T10:05:00Z"
+    expires_at: "2126-07-27T10:05:00Z"
+    note: "tailnet — approved for MCP discovery"
+    permitted_ports: [443]
+    permitted_scan_types: [http_probe]

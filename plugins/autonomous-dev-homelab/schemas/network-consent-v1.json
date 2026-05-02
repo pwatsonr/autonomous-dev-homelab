@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autonomous-dev/schemas/network-consent-v1.json",
+  "type": "object",
+  "required": ["version", "consents"],
+  "properties": {
+    "version": { "const": "1.0" },
+    "consents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["cidr", "approved_at", "expires_at", "permitted_ports", "permitted_scan_types"],
+        "properties": {
+          "cidr": {
+            "type": "string",
+            "pattern": "^(\\d{1,3}\\.){3}\\d{1,3}/(3[0-2]|[12]?\\d)$"
+          },
+          "approved_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "approved_by": { "type": "string" },
+          "note": { "type": "string" },
+          "network_fingerprint": { "type": "string" },
+          "permitted_ports": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "minItems": 1
+          },
+          "permitted_scan_types": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["http_probe", "ssh_probe", "tcp_connect"] },
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

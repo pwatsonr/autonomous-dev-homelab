@@ -1,0 +1,19 @@
+{
+  "name": "autonomous-dev-homelab",
+  "version": "0.1.0",
+  "description": "Homelab platform discovery, connection, and lifecycle automation plugin for autonomous-dev. Provides consent-gated network probing, inventory management, SSH certificate authority, and deploy/observe/migrate flows for Unraid, Proxmox VE, Docker, Kubernetes, Docker Swarm, UniFi, and TrueNAS.",
+  "author": {
+    "name": "pwatsonr",
+    "url": "https://github.com/pwatsonr"
+  },
+  "license": "MIT",
+  "keywords": [
+    "homelab",
+    "autonomous",
+    "discovery",
+    "proxmox",
+    "kubernetes",
+    "unraid",
+    "ssh-ca"
+  ]
+}
