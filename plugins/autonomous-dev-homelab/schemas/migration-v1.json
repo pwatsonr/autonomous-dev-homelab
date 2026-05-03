@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autonomous-dev/homelab/schemas/migration-v1.json",
+  "title": "Migration",
+  "description": "Operator-supplied migration plan per TDD-002 §10. All migrations are classified architectural and require typed-CONFIRM after a delay.",
+  "type": "object",
+  "required": [
+    "migration_id",
+    "source_platform",
+    "target_platform",
+    "classification",
+    "description",
+    "initiated_by",
+    "initiated_at",
+    "approval_delay_seconds",
+    "requires_typed_confirm",
+    "phases"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "migration_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "source_platform": { "type": "string", "minLength": 1 },
+    "target_platform": { "type": "string", "minLength": 1 },
+    "classification": { "type": "string", "const": "architectural" },
+    "description": { "type": "string", "minLength": 1 },
+    "initiated_by": { "type": "string", "minLength": 1 },
+    "initiated_at": { "type": "string", "format": "date-time" },
+    "approval_delay_seconds": { "type": "integer", "minimum": 3600 },
+    "requires_typed_confirm": { "type": "boolean", "const": true },
+    "phases": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/phase" }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "required": ["name", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["identify-resources", "plan-target", "dry-run", "approval-delay", "execute"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in-progress", "complete", "failed", "cancelled"]
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": "string", "format": "date-time" },
+        "output": {},
+        "error": {
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "message": { "type": "string" },
+            "code": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
