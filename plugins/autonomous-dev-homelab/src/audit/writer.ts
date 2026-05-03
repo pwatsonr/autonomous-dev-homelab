@@ -118,7 +118,16 @@ export class AuditWriter {
     }
     try {
       if (this.cachedPrevHmac === null || this.cachedPrevSeq === null) {
-        await this.recoverState();
+        try {
+          await this.recoverState();
+        } catch (err) {
+          if (err instanceof AuditWriteError) throw err;
+          const e = err as NodeJS.ErrnoException;
+          throw new AuditWriteError(
+            e.code ?? 'RECOVER_FAILED',
+            `failed to recover audit state from ${this.logPath}: ${e.message}`,
+          );
+        }
       }
       const prevHmac = this.cachedPrevHmac ?? GENESIS_PREV_HMAC;
       const prevSeq = this.cachedPrevSeq ?? 0;

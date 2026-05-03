@@ -237,4 +237,105 @@ describe('MCPDiscovery', () => {
       await fs.chmod(p, 0o644);
     }
   });
+
+  // ---------- SPEC-001-3-05 §"test-mcp-discovery.test.ts" extensions ------
+  // These tests close residual branch coverage gaps so the canonical suite
+  // hits the ≥95% gate documented in SPEC-001-3-05.
+
+  test('returns [] when mcpServers is explicit null', async () => {
+    const p = path.join(tempDir, '.mcp.json');
+    await fs.writeFile(p, JSON.stringify({ mcpServers: null }));
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {} });
+    await expect(d.discover()).resolves.toEqual([]);
+  });
+
+  test('returns [] when mcpServers is missing entirely', async () => {
+    const p = path.join(tempDir, '.mcp.json');
+    await fs.writeFile(p, JSON.stringify({}));
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {} });
+    await expect(d.discover()).resolves.toEqual([]);
+  });
+
+  test('skips entry where command array contains a non-string element', async () => {
+    const p = path.join(tempDir, '.mcp.json');
+    await fs.writeFile(
+      p,
+      JSON.stringify({
+        mcpServers: { 'mcp-server-docker': { command: ['node', 42] } },
+      }),
+    );
+    const { logger, captured } = captureLogger();
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {}, logger });
+    await expect(d.discover()).resolves.toEqual([]);
+    expect(captured.warn.some((m) => m.includes('mcp-server-docker'))).toBe(true);
+  });
+
+  test('skips entry where command is an empty array', async () => {
+    const p = path.join(tempDir, '.mcp.json');
+    await fs.writeFile(
+      p,
+      JSON.stringify({
+        mcpServers: { 'mcp-server-docker': { command: [] } },
+      }),
+    );
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {} });
+    await expect(d.discover()).resolves.toEqual([]);
+  });
+
+  test('command array joins parts; non-string args entries are dropped', async () => {
+    const p = path.join(tempDir, '.mcp.json');
+    await fs.writeFile(
+      p,
+      JSON.stringify({
+        mcpServers: {
+          'mcp-server-truenas': {
+            command: ['python3', '-m', 'mcp_truenas'],
+            args: ['--verbose', 99, '--port', '8080'],
+          },
+        },
+      }),
+    );
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {} });
+    const list = await d.discover();
+    expect(list).toHaveLength(1);
+    // 99 (number) is filtered out.
+    expect(list[0]!.command).toBe(
+      'python3 -m mcp_truenas --verbose --port 8080',
+    );
+  });
+
+  test('skips entry whose command is neither a string nor an array', async () => {
+    const p = path.join(tempDir, '.mcp.json');
+    await fs.writeFile(
+      p,
+      JSON.stringify({
+        mcpServers: { 'mcp-server-unifi': { command: { weird: true } } },
+      }),
+    );
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {} });
+    await expect(d.discover()).resolves.toEqual([]);
+  });
+
+  test('toHomelabPlatformId returns null for unknown platform types', () => {
+    // Cast to bypass the compile-time guard so we can exercise the default
+    // arm of the switch.
+    expect(
+      MCPDiscovery.toHomelabPlatformId(
+        'wat' as unknown as Parameters<typeof MCPDiscovery.toHomelabPlatformId>[0],
+      ),
+    ).toBeNull();
+  });
+
+  test('realpath errors other than ENOENT degrade gracefully (debug log)', async () => {
+    // Create a directory entry; pass a path that traverses through a file
+    // which yields ENOTDIR on most platforms — exercises the non-ENOENT
+    // branch in resolvePath.
+    const blocker = path.join(tempDir, 'block-file');
+    await fs.writeFile(blocker, 'x');
+    const p = path.join(blocker, '.mcp.json');
+    const { logger, captured } = captureLogger();
+    const d = new MCPDiscovery({ mcpConfigPath: p, env: {}, logger });
+    await expect(d.discover()).resolves.toEqual([]);
+    expect(captured.debug.length).toBeGreaterThanOrEqual(1);
+  });
 });
