@@ -1,0 +1,105 @@
+{
+  "title": "Homelab — Observation, Safety, Audit",
+  "uid": "homelab-overview",
+  "tags": ["autonomous-dev", "homelab"],
+  "schemaVersion": 38,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "platform",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(homelab_mttr_seconds, platform)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": false, "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "probe",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(homelab_fp_rate, probe)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "selected": false, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Per-platform observation count (24h)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (platform) (increase(homelab_mttr_seconds_count{platform=~\"$platform\"}[24h]))",
+          "legendFormat": "{{platform}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "MTTR by pattern (median p50)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, pattern) (rate(homelab_mttr_seconds_bucket{platform=~\"$platform\"}[5m])))",
+          "legendFormat": "{{pattern}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "FP-rate trend (per probe)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "homelab_fp_rate{probe=~\"$probe\"}",
+          "legendFormat": "{{probe}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Gate-latency p95 (by action_type)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, action_type) (rate(homelab_gate_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{action_type}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Bypass-attempt timeline",
+      "type": "barchart",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (increase(homelab_bypass_attempts_total[1h]))",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    }
+  ]
+}

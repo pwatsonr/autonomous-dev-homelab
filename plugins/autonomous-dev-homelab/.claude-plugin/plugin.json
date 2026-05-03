@@ -15,5 +15,9 @@
     "kubernetes",
     "unraid",
     "ssh-ca"
+  ],
+  "depends_on": [
+    "autonomous-dev",
+    "autonomous-dev-deploy-k8s"
   ]
 }

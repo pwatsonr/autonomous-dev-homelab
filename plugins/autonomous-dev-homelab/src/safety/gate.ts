@@ -20,6 +20,22 @@ import { ApprovalDeniedError } from './errors.js';
 import { typedConfirmModal } from './typed-confirm.js';
 import { scheduleDelayedAction } from './delay.js';
 import { verifyBackup } from '../backup/orchestrator.js';
+import { emitGateLatency } from '../metrics/emitters.js';
+import { recordMissingAdminBypass } from './validator.js';
+import type { ActionType } from '../metrics/types.js';
+
+/**
+ * Optional metric-emit hook for the gate. SPEC-002-3-03 §"Wiring into
+ * existing flows". When `actionType` is supplied (the action's
+ * autonomous-dev request_type), the gate emits a
+ * `homelab_gate_latency_seconds` measurement on completion. Default is
+ * undefined → no metric emission (preserves baseline test behavior).
+ */
+export interface GateMetricsHook {
+  actionType: ActionType;
+  /** Operator id used for `missing-admin` bypass-attempt metric. */
+  operatorId: string;
+}
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -33,27 +49,37 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 export async function gateApproval(
   action: Action,
   ctx: GateContext,
+  metrics?: GateMetricsHook,
 ): Promise<ApprovalResult> {
-  switch (action.destructiveness) {
-    case 'read-only':
-      return passThroughReadOnly(action, ctx);
+  const startedAt = Date.now();
+  const emit = (): void => {
+    if (metrics === undefined) return;
+    emitGateLatency(metrics.actionType, action.destructiveness, Date.now() - startedAt);
+  };
+  try {
+    switch (action.destructiveness) {
+      case 'read-only':
+        return await passThroughReadOnly(action, ctx);
 
-    case 'reversible':
-      return requestStandardApproval(action, ctx);
+      case 'reversible':
+        return await requestStandardApproval(action, ctx);
 
-    case 'persistent-modifying':
-      return requestStandardApproval(action, ctx);
+      case 'persistent-modifying':
+        return await requestStandardApproval(action, ctx);
 
-    case 'data-affecting':
-      return requestDataAffectingApproval(action, ctx);
+      case 'data-affecting':
+        return await requestDataAffectingApproval(action, ctx, metrics);
 
-    case 'architectural':
-      return requestArchitecturalApproval(action, ctx);
+      case 'architectural':
+        return await requestArchitecturalApproval(action, ctx, metrics);
 
-    default: {
-      const _exhaustive: never = action.destructiveness;
-      throw new Error(`Unknown destructiveness: ${_exhaustive as string}`);
+      default: {
+        const _exhaustive: never = action.destructiveness;
+        throw new Error(`Unknown destructiveness: ${_exhaustive as string}`);
+      }
     }
+  } finally {
+    emit();
   }
 }
 
@@ -87,13 +113,15 @@ async function requestStandardApproval(
 async function requestDataAffectingApproval(
   action: Action,
   ctx: GateContext,
+  metrics?: GateMetricsHook,
 ): Promise<ApprovalResult> {
   // SPEC-002-2-04 Task 10: backup verification BEFORE typed-CONFIRM.
   // `--skip-backup-check` is admin-only; logged as `gate.bypass`.
-  await runBackupCheck(action, ctx);
+  await runBackupCheck(action, ctx, metrics);
   const confirmed = await typedConfirmModal({
     message: `Confirm ${action.destructiveness} action: ${action.description}`,
     ttl_seconds: ctx.config.typed_confirm_ttl_seconds ?? 60,
+    ...(metrics !== undefined ? { operatorId: metrics.operatorId } : {}),
   });
   const ts = new Date().toISOString();
   if (!confirmed) {
@@ -117,6 +145,7 @@ async function requestDataAffectingApproval(
 async function requestArchitecturalApproval(
   action: Action,
   ctx: GateContext,
+  metrics?: GateMetricsHook,
 ): Promise<ApprovalResult> {
   if (action.dryRunReport === undefined || action.dryRunReport === '') {
     throw new Error(
@@ -125,7 +154,7 @@ async function requestArchitecturalApproval(
   }
   // SPEC-002-2-04 Task 10: backup verification BEFORE the 24h delay so
   // missing backups fail immediately, not 24h later.
-  await runBackupCheck(action, ctx);
+  await runBackupCheck(action, ctx, metrics);
   // Schedule the action for 24h. Resolves when the delay completes; rejects
   // on cancellation.
   await scheduleDelayedAction({
@@ -136,6 +165,7 @@ async function requestArchitecturalApproval(
   const confirmed = await typedConfirmModal({
     message: `Confirm architectural action after 24h delay: ${action.description}`,
     ttl_seconds: ctx.config.typed_confirm_ttl_seconds ?? 60,
+    ...(metrics !== undefined ? { operatorId: metrics.operatorId } : {}),
   });
   const ts = new Date().toISOString();
   if (!confirmed) {
@@ -164,10 +194,19 @@ async function requestArchitecturalApproval(
  * Throws `BackupRequiredError` (propagated from `verifyBackup`) when the
  * manifest is missing/stale/tampered.
  */
-async function runBackupCheck(action: Action, ctx: GateContext): Promise<void> {
+async function runBackupCheck(
+  action: Action,
+  ctx: GateContext,
+  metrics?: GateMetricsHook,
+): Promise<void> {
   const skip = ctx.flags?.skipBackupCheck === true;
   if (skip) {
     if (!ctx.isAdmin()) {
+      // SPEC-002-3-03: non-admin attempting the admin-only bypass path
+      // counts as a `missing-admin` bypass attempt.
+      if (metrics !== undefined) {
+        recordMissingAdminBypass(metrics.operatorId);
+      }
       throw new ApprovalDeniedError(action.id, '--skip-backup-check requires admin role');
     }
     await ctx.audit({

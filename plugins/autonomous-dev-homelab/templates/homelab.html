@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Homelab — Observation, Safety, Audit</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 1rem; color: #1a1a1a; }
+    h1 { margin: 0; }
+    header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1rem; }
+    #last-update { font-size: 0.85em; color: #666; }
+    section { border: 1px solid #ddd; padding: 0.75rem 1rem; margin-bottom: 1rem; border-radius: 4px; }
+    section h2 { margin: 0 0 0.5rem; font-size: 1.1em; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+    th, td { padding: 0.25rem 0.5rem; text-align: left; border-bottom: 1px solid #eee; }
+    .empty { color: #888; font-style: italic; }
+    .severity-P0 { color: #c00; font-weight: 600; }
+    .severity-P1 { color: #d97706; }
+    .severity-P2 { color: #555; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Homelab</h1>
+    <span id="last-update">last update: never</span>
+  </header>
+
+  <section id="inventory">
+    <h2>Inventory</h2>
+    <div data-slot="body"><span class="empty">loading…</span></div>
+  </section>
+
+  <section id="observations">
+    <h2>Observations</h2>
+    <div data-slot="body"><span class="empty">loading…</span></div>
+  </section>
+
+  <section id="pending-actions">
+    <h2>Pending Actions</h2>
+    <div data-slot="body"><span class="empty">loading…</span></div>
+  </section>
+
+  <section id="migrations">
+    <h2>Migrations</h2>
+    <div data-slot="body"><span class="empty">loading…</span></div>
+  </section>
+
+  <section id="audit">
+    <h2>Audit</h2>
+    <div data-slot="body"><span class="empty">loading…</span></div>
+  </section>
+
+  <script>
+  (function () {
+    'use strict';
+
+    function escapeHtml(value) {
+      var s = String(value == null ? '' : value);
+      return s.replace(/[&<>"']/g, function (c) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+      });
+    }
+
+    function setSection(id, html) {
+      var section = document.getElementById(id);
+      if (!section) return;
+      var slot = section.querySelector('[data-slot="body"]');
+      if (slot) slot.innerHTML = html;
+    }
+
+    function renderInventory(rows) {
+      if (!rows || rows.length === 0) return '<span class="empty">no platforms registered</span>';
+      var head = '<tr><th>id</th><th>type</th><th>hostname</th><th>status</th></tr>';
+      var body = rows.map(function (r) {
+        return '<tr>'
+          + '<td>' + escapeHtml(r.id) + '</td>'
+          + '<td>' + escapeHtml(r.type) + '</td>'
+          + '<td>' + escapeHtml(r.hostname || '') + '</td>'
+          + '<td>' + escapeHtml(r.status || 'unknown') + '</td>'
+          + '</tr>';
+      }).join('');
+      return '<table>' + head + body + '</table>';
+    }
+
+    function renderObservations(rows) {
+      if (!rows || rows.length === 0) return '<span class="empty">no recent observations</span>';
+      var head = '<tr><th>severity</th><th>platform</th><th>pattern</th><th>resource</th><th>discovered</th></tr>';
+      var body = rows.map(function (r) {
+        return '<tr>'
+          + '<td class="severity-' + escapeHtml(r.severity) + '">' + escapeHtml(r.severity) + '</td>'
+          + '<td>' + escapeHtml(r.platform) + '</td>'
+          + '<td>' + escapeHtml(r.pattern) + '</td>'
+          + '<td>' + escapeHtml(r.resource) + '</td>'
+          + '<td>' + escapeHtml(r.discovered_at) + '</td>'
+          + '</tr>';
+      }).join('');
+      return '<table>' + head + body + '</table>';
+    }
+
+    function renderPending(rows) {
+      if (!rows || rows.length === 0) return '<span class="empty">no actions pending approval</span>';
+      var head = '<tr><th>id</th><th>destructiveness</th><th>description</th><th>initiated</th></tr>';
+      var body = rows.map(function (r) {
+        return '<tr>'
+          + '<td>' + escapeHtml(r.id) + '</td>'
+          + '<td>' + escapeHtml(r.destructiveness) + '</td>'
+          + '<td>' + escapeHtml(r.description) + '</td>'
+          + '<td>' + escapeHtml(r.initiatedAt) + '</td>'
+          + '</tr>';
+      }).join('');
+      return '<table>' + head + body + '</table>';
+    }
+
+    function renderMigrations(rows) {
+      if (!rows || rows.length === 0) return '<span class="empty">no migrations</span>';
+      var head = '<tr><th>id</th><th>source</th><th>target</th><th>state</th><th>updated</th></tr>';
+      var body = rows.map(function (r) {
+        return '<tr>'
+          + '<td>' + escapeHtml(r.migration_id) + '</td>'
+          + '<td>' + escapeHtml(r.source_platform) + '</td>'
+          + '<td>' + escapeHtml(r.target_platform) + '</td>'
+          + '<td>' + escapeHtml(r.state) + '</td>'
+          + '<td>' + escapeHtml(r.updated_at) + '</td>'
+          + '</tr>';
+      }).join('');
+      return '<table>' + head + body + '</table>';
+    }
+
+    function renderAudit(rows) {
+      if (!rows || rows.length === 0) return '<span class="empty">no recent audit events</span>';
+      var head = '<tr><th>type</th><th>reason</th><th>occurred</th></tr>';
+      var body = rows.map(function (r) {
+        return '<tr>'
+          + '<td>' + escapeHtml(r.type) + '</td>'
+          + '<td>' + escapeHtml(r.reason) + '</td>'
+          + '<td>' + escapeHtml(r.occurred_at) + '</td>'
+          + '</tr>';
+      }).join('');
+      return '<table>' + head + body + '</table>';
+    }
+
+    function touch() {
+      var now = new Date().toISOString();
+      var el = document.getElementById('last-update');
+      if (el) el.textContent = 'last update: ' + now;
+    }
+
+    function refresh() {
+      Promise.all([
+        fetch('/portal/homelab/api/inventory').then(function (r) { return r.json(); }),
+        fetch('/portal/homelab/api/observations').then(function (r) { return r.json(); }),
+        fetch('/portal/homelab/api/pending-actions').then(function (r) { return r.json(); }),
+        fetch('/portal/homelab/api/migrations').then(function (r) { return r.json(); }),
+        fetch('/portal/homelab/api/audit').then(function (r) { return r.json(); })
+      ]).then(function (results) {
+        setSection('inventory', renderInventory(results[0]));
+        setSection('observations', renderObservations(results[1]));
+        setSection('pending-actions', renderPending(results[2]));
+        setSection('migrations', renderMigrations(results[3]));
+        setSection('audit', renderAudit(results[4]));
+        touch();
+      }).catch(function () {
+        // best-effort; the panel keeps the previous render on failure
+      });
+    }
+
+    function connectSse() {
+      try {
+        var es = new EventSource('/portal/homelab/sse');
+        es.addEventListener('observation.new', function () { refresh(); });
+        es.addEventListener('observation.resolved', function () { refresh(); });
+        es.addEventListener('action.status-changed', function () { refresh(); });
+        es.addEventListener('migration.phase-changed', function () { refresh(); });
+        es.onmessage = function () { touch(); };
+        es.onerror = function () {
+          es.close();
+          setTimeout(connectSse, 5000);
+        };
+      } catch (e) {
+        setTimeout(connectSse, 5000);
+      }
+    }
+
+    refresh();
+    connectSse();
+  })();
+  </script>
+</body>
+</html>

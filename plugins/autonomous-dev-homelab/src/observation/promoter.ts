@@ -14,6 +14,8 @@ import { promisify } from 'node:util';
 import { emitAudit, type AuditWriter } from '../audit/writer.js';
 import { FAULT_CATALOG } from './fault-catalog.js';
 import type { Destructiveness, Observation, RequestType } from './types.js';
+import type { ClockStore } from '../metrics/clock-store.js';
+import { emitFPRate } from '../metrics/emitters.js';
 
 const defaultExec = promisify(nodeExecFile);
 
@@ -31,6 +33,17 @@ export interface ObservationPromoterOptions {
   execFile?: ExecFileFn;
   /** Optional audit writer for `observation_promoted` entries. */
   auditWriter?: AuditWriter;
+  /**
+   * Optional clock store. When provided, `promote()` starts an `mttr`
+   * clock keyed by `observation.id` after successful intake submission.
+   * SPEC-002-3-03.
+   */
+  clockStore?: ClockStore;
+  /**
+   * Probe id label used for `homelab_fp_rate` emissions. Defaults to the
+   * observation's `pattern` field at emission time.
+   */
+  probeIdFn?: (obs: Observation) => string;
 }
 
 export interface PromoteOptions {
@@ -43,12 +56,16 @@ export class ObservationPromoter {
   private readonly repo: string;
   private readonly execFile: ExecFileFn;
   private readonly auditWriter: AuditWriter | undefined;
+  private readonly clockStore: ClockStore | undefined;
+  private readonly probeIdFn: (obs: Observation) => string;
 
   constructor(opts: ObservationPromoterOptions = {}) {
     this.bin = opts.autonomousDevBin ?? 'autonomous-dev';
     this.repo = opts.defaultRepo ?? 'homelab';
     this.execFile = opts.execFile ?? defaultExec;
     this.auditWriter = opts.auditWriter;
+    this.clockStore = opts.clockStore;
+    this.probeIdFn = opts.probeIdFn ?? ((obs): string => obs.pattern);
   }
 
   mapToRequestType(obs: Observation): RequestType {
@@ -94,6 +111,18 @@ export class ObservationPromoter {
       }),
     ];
     await this.execFile(this.bin, args);
+    // SPEC-002-3-03: start MTTR clock AFTER successful submission so
+    // failures inside the intake CLI don't leave orphaned clocks.
+    if (this.clockStore !== undefined) {
+      try {
+        await this.clockStore.start('mttr', obs.id, {
+          platform: obs.platform,
+          pattern: obs.pattern,
+        });
+      } catch {
+        // dup or write failure — non-fatal for promotion semantics.
+      }
+    }
     await emitAudit(
       this.auditWriter,
       'observation_promoted',
@@ -106,5 +135,33 @@ export class ObservationPromoter {
       },
       { platform: obs.platform },
     );
+  }
+
+  /**
+   * Mark a previously-promoted observation as cancelled (false-positive).
+   * Stops the MTTR clock without emitting MTTR (the observation never
+   * resolved) and emits `homelab_fp_rate` with `isFalsePositive=true`.
+   * SPEC-002-3-03.
+   */
+  async cancel(obs: Observation): Promise<void> {
+    if (this.clockStore !== undefined) {
+      try {
+        await this.clockStore.stop(`mttr:${obs.id}`);
+      } catch {
+        // ignore
+      }
+    }
+    await emitFPRate(this.probeIdFn(obs), true);
+  }
+
+  /**
+   * Mark a previously-promoted observation as resolved (true-positive).
+   * Stops the MTTR clock and emits both `homelab_mttr_seconds` (via
+   * caller) AND `homelab_fp_rate` with `isFalsePositive=false`. The
+   * caller is responsible for emitting MTTR — this method just shapes
+   * the FP-rate accounting.
+   */
+  async resolved(obs: Observation): Promise<void> {
+    await emitFPRate(this.probeIdFn(obs), false);
   }
 }

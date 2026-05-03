@@ -11,6 +11,7 @@
  */
 
 import { promptLine } from './io-stdin.js';
+import { emitBypassAttempt } from '../metrics/emitters.js';
 
 export interface TypedConfirmInput {
   message: string;
@@ -18,6 +19,11 @@ export interface TypedConfirmInput {
   ttl_seconds: number;
   /** Default 'CONFIRM'. Override for tests only. */
   expectedWord?: string;
+  /**
+   * Operator id used for `homelab_bypass_attempts_total` metric labels
+   * when a non-CONFIRM input is received. Default `'unknown'`. SPEC-002-3-03.
+   */
+  operatorId?: string;
 }
 
 /**
@@ -45,7 +51,15 @@ export async function typedConfirmModal(input: TypedConfirmInput): Promise<boole
     if (typeof timer.unref === 'function') timer.unref();
 
     promptLine(prompt)
-      .then((answer) => settle(answer === expected))
+      .then((answer) => {
+        const matched = answer === expected;
+        if (!matched) {
+          // SPEC-002-3-03: any input other than the literal expected word
+          // counts as a bypass attempt for the safety metric.
+          emitBypassAttempt(input.operatorId ?? 'unknown', 'wrong-confirm');
+        }
+        settle(matched);
+      })
       .catch(() => settle(false));
   });
 }
