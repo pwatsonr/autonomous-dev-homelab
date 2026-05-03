@@ -19,6 +19,7 @@ import type { Action, ApprovalResult, GateContext } from './types.js';
 import { ApprovalDeniedError } from './errors.js';
 import { typedConfirmModal } from './typed-confirm.js';
 import { scheduleDelayedAction } from './delay.js';
+import { verifyBackup } from '../backup/orchestrator.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -87,9 +88,9 @@ async function requestDataAffectingApproval(
   action: Action,
   ctx: GateContext,
 ): Promise<ApprovalResult> {
-  // Backup verification is wired here in SPEC-002-2-04 (Task 10). For
-  // SPEC-002-2-01 the verification is delegated to the gate's caller via
-  // module-level mocking in tests.
+  // SPEC-002-2-04 Task 10: backup verification BEFORE typed-CONFIRM.
+  // `--skip-backup-check` is admin-only; logged as `gate.bypass`.
+  await runBackupCheck(action, ctx);
   const confirmed = await typedConfirmModal({
     message: `Confirm ${action.destructiveness} action: ${action.description}`,
     ttl_seconds: ctx.config.typed_confirm_ttl_seconds ?? 60,
@@ -122,6 +123,9 @@ async function requestArchitecturalApproval(
       `architectural action ${action.id} missing required dryRunReport`,
     );
   }
+  // SPEC-002-2-04 Task 10: backup verification BEFORE the 24h delay so
+  // missing backups fail immediately, not 24h later.
+  await runBackupCheck(action, ctx);
   // Schedule the action for 24h. Resolves when the delay completes; rejects
   // on cancellation.
   await scheduleDelayedAction({
@@ -150,4 +154,29 @@ async function requestArchitecturalApproval(
     occurred_at: ts,
   });
   return { approved: true, actionId: action.id, approvedAt: ts, approvedBy: 'operator' };
+}
+
+/**
+ * Verifies a fresh backup exists for the action's target, OR honors the
+ * admin-only `skipBackupCheck` flag. Non-admins requesting the bypass are
+ * rejected with `ApprovalDeniedError`. Audit-logs `gate.bypass` on success.
+ *
+ * Throws `BackupRequiredError` (propagated from `verifyBackup`) when the
+ * manifest is missing/stale/tampered.
+ */
+async function runBackupCheck(action: Action, ctx: GateContext): Promise<void> {
+  const skip = ctx.flags?.skipBackupCheck === true;
+  if (skip) {
+    if (!ctx.isAdmin()) {
+      throw new ApprovalDeniedError(action.id, '--skip-backup-check requires admin role');
+    }
+    await ctx.audit({
+      type: 'gate.bypass',
+      action_id: action.id,
+      reason: 'admin used --skip-backup-check',
+      occurred_at: new Date().toISOString(),
+    });
+    return;
+  }
+  await verifyBackup({ platform: action.target.platform, target: action.target.resource });
 }

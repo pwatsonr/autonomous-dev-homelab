@@ -32,6 +32,9 @@ import { buildAuditCommand } from './commands/audit.js';
 import { buildConsentCommand } from './commands/consent.js';
 import { buildCACommand } from './commands/ca.js';
 import { buildObserveCommand } from './commands/observe.js';
+import { buildSafetyCommand } from './commands/safety.js';
+import { buildCancelActionCommand } from './commands/cancel-action.js';
+import { buildMigrationsCommand } from './commands/migrations.js';
 import { ObservationCollector } from '../observation/collector.js';
 import { DedupCache } from '../observation/dedup.js';
 import { ObservationStore } from '../observation/persistence.js';
@@ -330,6 +333,45 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       exitCode = handle.lastExitCode();
     });
     program.addCommand(handle.command);
+  }
+
+  // SPEC-002-2-04 CLI: `safety check`, `cancel-action`, `migrations status`.
+  // These are operator-facing inspection/cancel commands; not admin-gated.
+  // `loadAction` is a placeholder pending PLAN-002-1's action store: until
+  // that lands, we resolve to null (action not found) so `safety check`
+  // returns EXIT_USAGE rather than crashing.
+  {
+    const safety = buildSafetyCommand({
+      streams,
+      loadAction: async (_id: string) => null,
+    });
+    safety.command.hook('preAction', () => {
+      handled = true;
+    });
+    safety.command.hook('postAction', () => {
+      exitCode = safety.lastExitCode();
+    });
+    program.addCommand(safety.command);
+  }
+  {
+    const cancel = buildCancelActionCommand({ streams });
+    cancel.command.hook('preAction', () => {
+      handled = true;
+    });
+    cancel.command.hook('postAction', () => {
+      exitCode = cancel.lastExitCode();
+    });
+    program.addCommand(cancel.command);
+  }
+  {
+    const migrations = buildMigrationsCommand({ streams });
+    migrations.command.hook('preAction', () => {
+      handled = true;
+    });
+    migrations.command.hook('postAction', () => {
+      exitCode = migrations.lastExitCode();
+    });
+    program.addCommand(migrations.command);
   }
 
   const inventoryCmd = program
