@@ -1,0 +1,18 @@
+{
+  "migration_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "source_platform": "portainer",
+  "target_platform": "k3s",
+  "classification": "architectural",
+  "description": "Migrate Portainer-managed stacks to a K3s cluster.",
+  "initiated_by": "pwatson",
+  "initiated_at": "2026-05-01T10:00:00.000Z",
+  "approval_delay_seconds": 86400,
+  "requires_typed_confirm": true,
+  "phases": [
+    { "name": "identify-resources", "status": "pending" },
+    { "name": "plan-target", "status": "pending" },
+    { "name": "dry-run", "status": "pending" },
+    { "name": "approval-delay", "status": "pending" },
+    { "name": "execute", "status": "pending" }
+  ]
+}
