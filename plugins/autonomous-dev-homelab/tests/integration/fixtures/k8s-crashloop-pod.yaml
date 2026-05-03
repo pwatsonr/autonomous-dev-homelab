@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crashloop-test
+  namespace: default
+spec:
+  restartPolicy: Always
+  containers:
+    - name: looper
+      image: busybox:1.36
+      command: ["sh", "-c", "echo 'crashing'; exit 1"]

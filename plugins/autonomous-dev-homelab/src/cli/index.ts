@@ -31,6 +31,11 @@ import { buildPlatformCommand } from './commands/platform.js';
 import { buildAuditCommand } from './commands/audit.js';
 import { buildConsentCommand } from './commands/consent.js';
 import { buildCACommand } from './commands/ca.js';
+import { buildObserveCommand } from './commands/observe.js';
+import { ObservationCollector } from '../observation/collector.js';
+import { DedupCache } from '../observation/dedup.js';
+import { ObservationStore } from '../observation/persistence.js';
+import { ObservationPromoter } from '../observation/promoter.js';
 import {
   enforceAdminIfRequired,
   buildAdminAuthContext,
@@ -293,6 +298,32 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     const handle = buildCACommand({ caManager, inventoryManager, streams });
     handle.command.hook('preAction', async (_t, actionCommand) => {
       await wrapPreAction(`ca ${actionCommand.name()}`, dataDir);
+    });
+    handle.command.hook('postAction', () => {
+      if (adminBlocked) return;
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `observe` command group: scan + list + promote. Probe bootstrap (which
+  // platforms get which probes) is out of scope for SPEC-002-1-04 — the
+  // collector here is constructed with an empty probe array; tests
+  // exercise the command builder directly with mocked deps.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const store = new ObservationStore(dataDir);
+    const dedup = new DedupCache();
+    const promoter = new ObservationPromoter();
+    const collector = new ObservationCollector({
+      probes: [],
+      dedup,
+      store,
+      promoter,
+    });
+    const handle = buildObserveCommand({ collector, store, promoter, streams });
+    handle.command.hook('preAction', async (_t, actionCommand) => {
+      await wrapPreAction(`observe ${actionCommand.name()}`, dataDir);
     });
     handle.command.hook('postAction', () => {
       if (adminBlocked) return;

@@ -23,7 +23,10 @@ export type AuditEventType =
   | 'connection_failed'
   | 'connection_closed'
   | 'command_executed'
-  | 'audit_key_rotated';
+  | 'audit_key_rotated'
+  | 'observation_created'
+  | 'observation_promoted'
+  | 'observation_dedup_suppressed';
 
 export interface AuditEntry {
   /** Monotonic counter starting at 1. */

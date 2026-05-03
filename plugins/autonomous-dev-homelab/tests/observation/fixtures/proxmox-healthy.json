@@ -1,0 +1,8 @@
+[
+  { "type": "cluster", "name": "homelab", "version": 4, "nodes": 3, "quorate": 1 },
+  { "type": "node", "name": "pve-01", "online": 1, "ip": "10.0.0.10" },
+  { "type": "node", "name": "pve-02", "online": 1, "ip": "10.0.0.11" },
+  { "type": "node", "name": "pve-03", "online": 1, "ip": "10.0.0.12" },
+  { "type": "storage", "storage": "local-lvm", "status": "available", "node": "pve-01" },
+  { "type": "storage", "storage": "nfs-data", "status": "available", "node": "pve-01" }
+]

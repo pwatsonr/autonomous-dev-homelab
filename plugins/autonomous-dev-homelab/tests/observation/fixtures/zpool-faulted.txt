@@ -1,0 +1,23 @@
+  pool: tank
+ state: DEGRADED
+status: One or more devices has experienced an unrecoverable error.
+action: Determine if the device needs to be replaced.
+  scan: none requested
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank        DEGRADED     0     0     0
+
+errors: No known data errors
+
+  pool: backup
+ state: FAULTED
+status: The pool is faulted; one or more devices are unavailable.
+action: Replace the missing device.
+  scan: none requested
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	backup      FAULTED      0     0     0  insufficient replicas
+
+errors: No known data errors

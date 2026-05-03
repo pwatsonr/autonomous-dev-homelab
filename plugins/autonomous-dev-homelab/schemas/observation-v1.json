@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autonomous-dev/schemas/observation-v1.json",
+  "title": "Observation",
+  "description": "A single fault detection emitted by a homelab probe. See TDD-002 §5/§7. Future plans extending the catalog must add new pattern keys to BOTH this enum AND src/observation/types.ts AND src/observation/fault-catalog.ts.",
+  "type": "object",
+  "required": ["id", "platform", "pattern", "resource", "severity", "discovered_at"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "platform": { "type": "string", "minLength": 1 },
+    "pattern": {
+      "type": "string",
+      "enum": [
+        "crash_loop",
+        "oom_kill",
+        "disk_io_error",
+        "zfs_pool_degraded",
+        "unifi_ap_offline",
+        "cert_expiry_imminent",
+        "backup_overdue",
+        "service_5xx",
+        "daemon_heartbeat_stale"
+      ]
+    },
+    "resource": { "type": "string", "minLength": 1 },
+    "severity": { "type": "string", "enum": ["P0", "P1", "P2"] },
+    "discovered_at": { "type": "string", "format": "date-time" },
+    "details": { "type": "object" },
+    "dedup_key": { "type": "string", "minLength": 1 }
+  }
+}

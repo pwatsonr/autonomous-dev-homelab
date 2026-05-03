@@ -1,0 +1,14 @@
+  pool: tank
+ state: DEGRADED
+status: One or more devices has experienced an unrecoverable error.
+action: Determine if the device needs to be replaced.
+  scan: none requested
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank        DEGRADED     0     0     0
+	  mirror-0  DEGRADED     0     0     0
+	    sda     ONLINE       0     0     0
+	    sdb     FAULTED     53    12     0  too many errors
+
+errors: No known data errors
