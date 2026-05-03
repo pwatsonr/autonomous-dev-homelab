@@ -32,6 +32,7 @@ import {
   type RevocationEntry,
   type RotationResult,
 } from './types.js';
+import type { AuditWriter } from '../audit/writer.js';
 
 const execFileAsync = promisify(childProcess.execFile);
 
@@ -51,6 +52,13 @@ export interface SSHCertificateManagerOptions {
   sshKeygenBin?: string;
   /** Injectable execFile for tests. */
   execFile?: ExecFileFn;
+  /**
+   * Optional audit writer (SPEC-001-3-02). When supplied, every
+   * destructive CA action emits an audit entry after successful
+   * persistence. Audit-write errors propagate to the caller so the
+   * operator sees them.
+   */
+  auditWriter?: AuditWriter;
 }
 
 interface ExecResult {
@@ -62,10 +70,12 @@ export class SSHCertificateManager {
   private readonly dataDir: string;
   private readonly sshKeygenBin: string;
   private readonly execFile: ExecFileFn;
+  private readonly auditWriter?: AuditWriter;
 
   constructor(opts: SSHCertificateManagerOptions) {
     this.dataDir = path.resolve(opts.dataDir);
     this.sshKeygenBin = opts.sshKeygenBin ?? 'ssh-keygen';
+    if (opts.auditWriter !== undefined) this.auditWriter = opts.auditWriter;
     if (opts.execFile) {
       this.execFile = opts.execFile;
     } else {
@@ -121,6 +131,12 @@ export class SSHCertificateManager {
     await fs.chmod(this.revocationListPath(), 0o600);
     // Initialize serial counter at 1 so first signed cert gets serial 1.
     await this.writeSerialCounter(1);
+    if (this.auditWriter !== undefined) {
+      await this.auditWriter.append('ca_initialized', {
+        ca_dir: this.caDir(),
+        ca_pub_path: this.caPubPath(),
+      });
+    }
   }
 
   /** Returns the contents of `homelab_ca.pub`. */
@@ -193,6 +209,25 @@ export class SSHCertificateManager {
       await fs.rename(sshKeygenCertPath, this.userCertPath(platformId));
     }
     await fs.chmod(this.userCertPath(platformId), 0o644);
+    if (this.auditWriter !== undefined) {
+      let fp = '';
+      try {
+        fp = await this.fingerprint(this.userCertPath(platformId));
+      } catch {
+        // Fingerprint extraction is best-effort for the audit payload.
+      }
+      await this.auditWriter.append(
+        'cert_signed',
+        {
+          serial,
+          principal,
+          validity_days: validityDays,
+          fingerprint: fp,
+          cert_path: this.userCertPath(platformId),
+        },
+        { platform: platformId },
+      );
+    }
     return this.userCertPath(platformId);
   }
 
@@ -219,6 +254,17 @@ export class SSHCertificateManager {
       { mode: 0o600 },
     );
     await fs.chmod(this.revocationListPath(), 0o600);
+    if (this.auditWriter !== undefined) {
+      await this.auditWriter.append(
+        'cert_revoked',
+        {
+          fingerprint: entry.fingerprint,
+          revoked_at: entry.revokedAt,
+          reason: 'manual',
+        },
+        { platform: platformId },
+      );
+    }
     return entry;
   }
 
@@ -358,6 +404,28 @@ export class SSHCertificateManager {
     );
     await fs.chmod(this.revocationListPath(), 0o600);
     const newFingerprint = await this.fingerprint(this.userCertPath(platformId));
+    if (this.auditWriter !== undefined) {
+      await this.auditWriter.append(
+        'cert_revoked',
+        {
+          fingerprint: oldFingerprint,
+          revoked_at: now.toISOString(),
+          reason: 'rotation',
+        },
+        { platform: platformId },
+      );
+      await this.auditWriter.append(
+        'cert_signed',
+        {
+          principal,
+          fingerprint: newFingerprint,
+          validity_days: 365,
+          rotated_from: oldFingerprint,
+          cert_path: this.userCertPath(platformId),
+        },
+        { platform: platformId },
+      );
+    }
     return {
       oldFingerprint,
       newFingerprint,

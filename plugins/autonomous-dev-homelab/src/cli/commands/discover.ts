@@ -31,6 +31,7 @@ import {
 import type { Consent } from '../../consent/types.js';
 import type { MatchedPlatform } from '../../discovery/types.js';
 import type { Platform } from '../../discovery/inventory-types.js';
+import type { AuditWriter } from '../../audit/writer.js';
 import {
   EXIT_OK,
   EXIT_USAGE,
@@ -70,6 +71,14 @@ export interface DiscoverDeps {
    * SPEC-001-3-01 §"Inventory Wiring".
    */
   mcpDiscovery?: MCPDiscovery;
+  /**
+   * Optional audit writer (SPEC-001-3-02). When provided, emits a
+   * `discovery_started` entry at the start of the run and a
+   * `discovery_completed` entry just before returning, regardless of
+   * exit code. Audit-write errors are logged to stderr but do NOT
+   * change the discover exit code (read-only command).
+   */
+  auditWriter?: AuditWriter;
 }
 
 interface ScanReport {
@@ -140,6 +149,63 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
     return EXIT_USAGE;
   }
 
+  // Emit discovery_started after arg validation so a usage error does
+  // not trigger an audit entry. Audit failures are non-fatal here
+  // (discover is read-only — the operator can still see results).
+  if (deps.auditWriter !== undefined) {
+    try {
+      await deps.auditWriter.append('discovery_started', {
+        cidr: args.cidr ?? null,
+        json_mode: jsonMode,
+      });
+    } catch (err) {
+      streams.stderr(`audit_emit_failed: discovery_started: ${(err as Error).message}\n`);
+    }
+  }
+
+  // Track the run-summary fields so the finally-block can emit a
+  // self-describing `discovery_completed` regardless of which branch
+  // returned the exit code.
+  const runReport: { scanned: number; failed: number; matches: number; addedIds: number; updatedIds: number } = {
+    scanned: 0,
+    failed: 0,
+    matches: 0,
+    addedIds: 0,
+    updatedIds: 0,
+  };
+  let exitCode = EXIT_OK;
+  try {
+    exitCode = await runDiscoverBody(args, deps, streams, jsonMode, noPrompt, now, runReport);
+    return exitCode;
+  } finally {
+    if (deps.auditWriter !== undefined) {
+      try {
+        await deps.auditWriter.append('discovery_completed', {
+          cidr: args.cidr ?? null,
+          exit_code: exitCode,
+          scanned_cidrs: runReport.scanned,
+          failed_cidrs: runReport.failed,
+          matches: runReport.matches,
+          added_ids: runReport.addedIds,
+          updated_ids: runReport.updatedIds,
+        });
+      } catch (err) {
+        streams.stderr(`audit_emit_failed: discovery_completed: ${(err as Error).message}\n`);
+      }
+    }
+  }
+}
+
+/** Body of `runDiscover`; refactored for the audit start/complete wrap. */
+async function runDiscoverBody(
+  args: DiscoverArgs,
+  deps: DiscoverDeps,
+  streams: OutputStreams,
+  jsonMode: boolean,
+  noPrompt: boolean,
+  now: () => Date,
+  runReport: { scanned: number; failed: number; matches: number; addedIds: number; updatedIds: number },
+): Promise<number> {
   // 2. Resolve target CIDR list.
   let cidrs: string[];
   if (args.cidr !== undefined) {
@@ -332,6 +398,14 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
       `Discovered ${report.matches.length} platforms (${report.addedIds.length} new, ${report.updatedIds.length} updated) across ${report.scanned} CIDRs.\n`,
     );
   }
+
+  // Mirror local report into runReport so the audit `discovery_completed`
+  // entry (emitted by the wrapper's finally block) can describe the run.
+  runReport.scanned = report.scanned;
+  runReport.failed = report.failed;
+  runReport.matches = report.matches.length;
+  runReport.addedIds = report.addedIds.length;
+  runReport.updatedIds = report.updatedIds.length;
 
   // 5. Exit code: success if at least one CIDR scanned cleanly; partial
   //    if any CIDR failed; full failure (kept as no-consent in degenerate

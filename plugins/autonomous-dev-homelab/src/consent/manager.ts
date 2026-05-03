@@ -22,6 +22,7 @@ import * as crypto from 'node:crypto';
 import * as yaml from 'js-yaml';
 import { Consent, ConsentFile, ScanType } from './types.js';
 import { computeFingerprint, FingerprintRuntime } from './fingerprint.js';
+import type { AuditWriter } from '../audit/writer.js';
 
 const DEFAULT_EXPIRY_DAYS = 90;
 
@@ -33,6 +34,8 @@ export interface ConsentManagerOptions {
   fingerprintRuntime?: FingerprintRuntime;
   /** Override clock for tests. Defaults to `() => new Date()`. */
   now?: () => Date;
+  /** Optional audit writer (SPEC-001-3-02). Emits consent_granted/revoked. */
+  auditWriter?: AuditWriter;
 }
 
 interface ResolvedOptions {
@@ -40,6 +43,7 @@ interface ResolvedOptions {
   promptFn: (msg: string) => Promise<boolean>;
   fingerprintRuntime?: FingerprintRuntime;
   now: () => Date;
+  auditWriter?: AuditWriter;
 }
 
 // Default prompt: refuse silently if no prompter wired in. This matches
@@ -161,6 +165,7 @@ export class ConsentManager {
       promptFn: opts.promptFn ?? REFUSE_BY_DEFAULT,
       fingerprintRuntime: opts.fingerprintRuntime,
       now: opts.now ?? (() => new Date()),
+      auditWriter: opts.auditWriter,
     };
   }
 
@@ -217,7 +222,69 @@ export class ConsentManager {
       file.consents.push(newConsent);
       await this.writeFile(file);
     });
+    // Emit AFTER persist so a failed write does not produce a misleading
+    // audit entry. Audit-write errors propagate (per SPEC-001-3-02 AC).
+    if (this.opts.auditWriter !== undefined) {
+      await this.opts.auditWriter.append('consent_granted', {
+        cidr: newConsent.cidr,
+        ports: newConsent.permitted_ports,
+        scan_types: newConsent.permitted_scan_types,
+        expires_at: newConsent.expires_at,
+        network_fingerprint: newConsent.network_fingerprint ?? null,
+      });
+    }
     return true;
+  }
+
+  /**
+   * Remove all consent entries matching `cidr` from the consent file.
+   * SPEC-001-3-02 §"Wiring" + SPEC-001-3-03 §"consent revoke".
+   *
+   * Returns the number of entries removed (0 if none matched). Emits a
+   * `consent_revoked` audit entry for each removed entry, in file order.
+   * Atomic against concurrent grants via the same per-file mutex.
+   */
+  async revokeConsent(cidr: string): Promise<number> {
+    if (parseCidr(cidr) === null) {
+      throw new Error(`invalid CIDR: ${cidr}`);
+    }
+    const removed: Consent[] = [];
+    await withFileLock(this.consentFilePath, async () => {
+      const file = await this.loadFile();
+      const kept: Consent[] = [];
+      for (const entry of file.consents) {
+        if (entry.cidr === cidr) {
+          removed.push(entry);
+        } else {
+          kept.push(entry);
+        }
+      }
+      if (removed.length === 0) return;
+      file.consents = kept;
+      await this.writeFile(file);
+    });
+    if (this.opts.auditWriter !== undefined && removed.length > 0) {
+      for (const entry of removed) {
+        await this.opts.auditWriter.append('consent_revoked', {
+          cidr: entry.cidr,
+          ports: entry.permitted_ports,
+          scan_types: entry.permitted_scan_types,
+          approved_at: entry.approved_at,
+          expires_at: entry.expires_at,
+        });
+      }
+    }
+    return removed.length;
+  }
+
+  /**
+   * Returns a snapshot of all consent entries on disk. Read-only;
+   * callers must not mutate the returned objects. SPEC-001-3-03
+   * §"consent list".
+   */
+  async listConsents(): Promise<Consent[]> {
+    const file = await this.loadFile();
+    return file.consents.map((c) => ({ ...c }));
   }
 
   /** Returns `route=<default-gw>;dns=<dns1,dns2>` for the current host. */
