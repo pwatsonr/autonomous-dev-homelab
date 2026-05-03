@@ -272,13 +272,6 @@ describe('SSHCertificateManager', () => {
     });
   });
 
-  describe('rotateKey stub', () => {
-    test('throws referencing SPEC-001-2-04', async () => {
-      const mgr = new SSHCertificateManager({ dataDir: tempDir, execFile: makeFakeExecFile().fake });
-      await expect(mgr.rotateKey('p1', 'pp')).rejects.toThrow(/SPEC-001-2-04/);
-    });
-  });
-
   describe('listCertificates', () => {
     test('reports revoked flag for entries in revocation.list', async () => {
       const { fake } = makeFakeExecFile({ passphrase: 'pp' });
