@@ -38,7 +38,7 @@ export class ClockAlreadyRunning extends Error {
   }
 }
 
-const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SAFE_ID = /^[A-Za-z0-9_:-]{1,128}$/;
 
 export interface ClockStoreOptions {
   /** Override the data dir for tests. */
