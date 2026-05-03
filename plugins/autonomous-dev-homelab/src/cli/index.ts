@@ -35,6 +35,8 @@ import { buildObserveCommand } from './commands/observe.js';
 import { buildSafetyCommand } from './commands/safety.js';
 import { buildCancelActionCommand } from './commands/cancel-action.js';
 import { buildMigrationsCommand } from './commands/migrations.js';
+import { buildMetricsCommand } from './commands/metrics.js';
+import { buildPortalCommand } from './commands/portal.js';
 import { ObservationCollector } from '../observation/collector.js';
 import { DedupCache } from '../observation/dedup.js';
 import { ObservationStore } from '../observation/persistence.js';
@@ -372,6 +374,28 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       exitCode = migrations.lastExitCode();
     });
     program.addCommand(migrations.command);
+  }
+  // SPEC-002-3-03: `homelab metrics show` + `homelab portal`. No admin
+  // gating — both commands are read-only operator-facing inspection.
+  {
+    const metrics = buildMetricsCommand({ streams });
+    metrics.command.hook('preAction', () => {
+      handled = true;
+    });
+    metrics.command.hook('postAction', () => {
+      exitCode = metrics.lastExitCode();
+    });
+    program.addCommand(metrics.command);
+  }
+  {
+    const portal = buildPortalCommand({ streams });
+    portal.command.hook('preAction', () => {
+      handled = true;
+    });
+    portal.command.hook('postAction', () => {
+      exitCode = portal.lastExitCode();
+    });
+    program.addCommand(portal.command);
   }
 
   const inventoryCmd = program
