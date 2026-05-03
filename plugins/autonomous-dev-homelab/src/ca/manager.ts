@@ -260,14 +260,151 @@ export class SSHCertificateManager {
   }
 
   /**
-   * Stub for SPEC-001-2-04. Throws so subclasses may import the manager
-   * without depending on a future spec.
+   * Rotate a per-platform user keypair + cert. SPEC-001-2-04
+   * §"`SSHCertificateManager.rotateKey()`".
+   *
+   * Phases:
+   *   1. Read existing cert metadata; capture old fingerprint + principal.
+   *   2. Generate new keypair + cert under temp filenames.
+   *   3. Atomic-rename temp files over the canonical paths.
+   *   4. Append old fingerprint to revocation.list.
+   *
+   * If phase 2 throws the canonical files are untouched (operator can
+   * retry). A phase-3 partial failure on a network FS surfaces a
+   * CRITICAL CAError to direct manual inspection.
    */
-  async rotateKey(_platformId: string, _passphrase: string): Promise<RotationResult> {
-    throw new CAError(
-      'NOT_IMPLEMENTED',
-      'rotateKey is not implemented; see SPEC-001-2-04',
+  async rotateKey(platformId: string, passphrase: string): Promise<RotationResult> {
+    const certPath = this.userCertPath(platformId);
+    if (!await fileExists(certPath)) {
+      throw new CAError('NO_CERT', `no cert for ${platformId} at ${certPath}`);
+    }
+    if (!await fileExists(this.caKeyPath())) {
+      throw new CAError('NO_CA', 'CA has not been initialized');
+    }
+    // Phase 1: capture old fingerprint + principal so we can re-sign with
+    // matching identity.
+    const oldMeta = await this.readCertMetadata(certPath);
+    const oldFingerprint = oldMeta.fingerprint;
+    const principal = oldMeta.principal !== '' ? oldMeta.principal : platformId;
+
+    // Phase 2: generate new keypair + cert under temp basenames. We use
+    // distinct basenames so a half-finished retry does not collide with
+    // existing files. ssh-keygen will create `<basename>` and
+    // `<basename>.pub`; ssh-keygen -s will produce `<basename>-cert.pub`.
+    const tempBasename = path.join(this.keysDir(), `${platformId}.rotate-${process.pid}-${Date.now()}`);
+    const tempKeyFile = tempBasename;
+    const tempPubFile = `${tempBasename}.pub`;
+    const tempCertFile = `${tempBasename}-cert.pub`;
+    try {
+      await this.execFile(this.sshKeygenBin, [
+        '-t',
+        'ed25519',
+        '-f',
+        tempBasename,
+        '-N',
+        '',
+        '-C',
+        platformId,
+      ]);
+      await fs.chmod(tempKeyFile, 0o600);
+      const serial = await this.nextSerial();
+      await this.execFile(this.sshKeygenBin, [
+        '-s',
+        this.caKeyPath(),
+        '-P',
+        passphrase,
+        '-I',
+        platformId,
+        '-n',
+        principal,
+        '-V',
+        '+365d',
+        '-z',
+        String(serial),
+        tempPubFile,
+      ]);
+    } catch (err) {
+      // Phase 2 failed; clean up any partial temp files. Canonical files
+      // are untouched.
+      await safeUnlink(tempKeyFile);
+      await safeUnlink(tempPubFile);
+      await safeUnlink(tempCertFile);
+      throw err;
+    }
+
+    // Phase 3: atomic rename. Failures here are rare (same-FS rename) but
+    // we surface them as CRITICAL and stop before phase 4 to avoid a
+    // revoked-but-still-needed cert.
+    try {
+      await fs.rename(tempKeyFile, this.userKeyPath(platformId));
+      await fs.rename(tempPubFile, this.userPubPath(platformId));
+      await fs.rename(tempCertFile, this.userCertPath(platformId));
+    } catch (err) {
+      throw new CAError(
+        'CRITICAL_ROTATION_PARTIAL',
+        `rotation phase 3 partial failure for ${platformId}; inspect ${this.keysDir()} manually: ${(err as Error).message}`,
+      );
+    }
+    await fs.chmod(this.userKeyPath(platformId), 0o600);
+    await fs.chmod(this.userPubPath(platformId), 0o644);
+    await fs.chmod(this.userCertPath(platformId), 0o644);
+
+    // Phase 4: revoke old fingerprint.
+    const now = new Date();
+    await fs.appendFile(
+      this.revocationListPath(),
+      `${platformId}\t${oldFingerprint}\t${now.toISOString()}\n`,
+      { mode: 0o600 },
     );
+    await fs.chmod(this.revocationListPath(), 0o600);
+    const newFingerprint = await this.fingerprint(this.userCertPath(platformId));
+    return {
+      oldFingerprint,
+      newFingerprint,
+      revokedAt: now.toISOString(),
+    };
+  }
+
+  /**
+   * Produce a binary KRL (Key Revocation List) suitable for distribution
+   * as `RevokedKeys` on remote sshd. SPEC-001-2-04 §"`generateKRL()`".
+   *
+   * Wraps `ssh-keygen -k -f <output> -s <ca-key> [<input>]`. The input is
+   * the manager's revocation.list, which contains tab-separated
+   * `<id>\t<fp>\t<iso>` lines. ssh-keygen's KRL text format expects either
+   * `serial: N` lines or `sha256: <fingerprint>` lines, so we transform
+   * the manager's list into the expected format on a temp file and pass
+   * that to ssh-keygen.
+   *
+   * Returns the absolute path to the produced KRL file.
+   */
+  async generateKRL(passphrase: string, outputPath: string): Promise<string> {
+    if (!await fileExists(this.caKeyPath())) {
+      throw new CAError('NO_CA', 'CA has not been initialized');
+    }
+    const fps = await this.readRevocationFingerprints();
+    const krlInputLines: string[] = [];
+    for (const fp of fps) {
+      // KRL text format: each "sha256:" line revokes by hash.
+      krlInputLines.push(`sha256: ${fp}`);
+    }
+    const krlInputPath = path.join(this.caDir(), `revocation.krl-input-${process.pid}-${Date.now()}`);
+    try {
+      await atomicWriteFile(krlInputPath, krlInputLines.join('\n') + '\n', { mode: 0o600 });
+      await this.execFile(this.sshKeygenBin, [
+        '-k',
+        '-f',
+        outputPath,
+        '-s',
+        this.caKeyPath(),
+        '-P',
+        passphrase,
+        krlInputPath,
+      ]);
+    } finally {
+      await safeUnlink(krlInputPath);
+    }
+    return outputPath;
   }
 
   // --- helpers (also used by SPEC-001-2-04) -------------------------------
@@ -371,5 +508,13 @@ async function fileExists(p: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function safeUnlink(p: string): Promise<void> {
+  try {
+    await fs.unlink(p);
+  } catch {
+    // best-effort cleanup; missing file is fine.
   }
 }

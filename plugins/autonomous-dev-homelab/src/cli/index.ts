@@ -23,6 +23,11 @@ import * as yaml from 'js-yaml';
 import type { Consent } from '../consent/types.js';
 import { runDiscover } from './commands/discover.js';
 import { runInventoryList } from './commands/inventory.js';
+import { buildPlatformCommand } from './commands/platform.js';
+import { SSHCertificateManager } from '../ca/manager.js';
+import { PassphraseProvider } from '../ca/passphrase.js';
+import { ConnectionPool } from '../connection/pool.js';
+import { createConnection } from '../connection/factory.js';
 import { EXIT_INTERNAL, EXIT_OK, EXIT_USAGE } from './exit-codes.js';
 import { printError, type OutputStreams, DEFAULT_STREAMS } from './output.js';
 
@@ -140,6 +145,54 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
         },
       );
     });
+
+  // `platform` command group: install-ca, connect-test, rotate-key.
+  // Wire dependencies fresh per invocation so data-dir overrides are
+  // picked up. The build helper attaches its own action handlers; we
+  // proxy `handled = true` and the resulting exit code through Commander
+  // pre/post hooks.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const inventoryPath = path.join(dataDir, 'inventory.yaml');
+    const inventoryManager = new InventoryManager(inventoryPath);
+    const caManager = new SSHCertificateManager({ dataDir });
+    const passphrase = new PassphraseProvider({ dataDir });
+    // Inventory lookup must happen synchronously inside the pool factory
+    // (since `Connection`s are created sync and connected async). We
+    // pre-fetch into a small per-pool cache the first time getConnection
+    // is called for an id.
+    const preloaded = new Map<string, import('../discovery/inventory-types.js').Platform>();
+    const ensure = async (id: string): Promise<void> => {
+      if (preloaded.has(id)) return;
+      const e = await inventoryManager.getPlatform(id);
+      if (e !== null) preloaded.set(id, e);
+    };
+    const pool = new ConnectionPool({}, (id: string) => {
+      const entry = preloaded.get(id);
+      if (entry === undefined) {
+        throw new Error(`platform '${id}' not loaded; ensure() not called first`);
+      }
+      return createConnection(id, entry);
+    });
+    const handle = buildPlatformCommand({
+      inventoryManager,
+      caManager,
+      passphrase,
+      pool,
+      streams,
+    });
+    // Mark handled and propagate exit code for any subcommand under
+    // `platform`. The `preSubcommand` hook fires once per invocation.
+    handle.command.hook('preAction', async (_thisCommand, actionCommand) => {
+      handled = true;
+      const platformId = actionCommand.args[0];
+      if (typeof platformId === 'string') await ensure(platformId);
+    });
+    handle.command.hook('postAction', () => {
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
 
   const inventoryCmd = program
     .command('inventory')
