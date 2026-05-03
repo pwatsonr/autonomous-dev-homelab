@@ -1,0 +1,8 @@
+Port 22
+PermitRootLogin yes
+PasswordAuthentication no
+PubkeyAuthentication yes
+TrustedUserCAKeys /etc/ssh/homelab_ca.pub
+RevokedKeys      /etc/ssh/homelab_ca.krl
+LogLevel VERBOSE
+UsePAM no
