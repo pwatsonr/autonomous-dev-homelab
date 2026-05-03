@@ -24,11 +24,15 @@ import type { Consent } from '../consent/types.js';
 import { runDiscover } from './commands/discover.js';
 import { runInventoryList } from './commands/inventory.js';
 import { buildPlatformCommand } from './commands/platform.js';
+import { buildAuditCommand } from './commands/audit.js';
+import { buildConsentCommand } from './commands/consent.js';
+import { buildCACommand } from './commands/ca.js';
 import { SSHCertificateManager } from '../ca/manager.js';
 import { PassphraseProvider } from '../ca/passphrase.js';
 import { ConnectionPool } from '../connection/pool.js';
 import { createConnection } from '../connection/factory.js';
 import { MCPDiscovery } from '../connection/mcp-discovery.js';
+import { AuditKeyStore } from '../audit/key-store.js';
 import { EXIT_INTERNAL, EXIT_OK, EXIT_USAGE } from './exit-codes.js';
 import { printError, type OutputStreams, DEFAULT_STREAMS } from './output.js';
 
@@ -190,6 +194,54 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       handled = true;
       const platformId = actionCommand.args[0];
       if (typeof platformId === 'string') await ensure(platformId);
+    });
+    handle.command.hook('postAction', () => {
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `audit` command group: verify + query.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const logPath = path.join(dataDir, 'audit.log');
+    const keyStore = new AuditKeyStore({ keyPath: path.join(dataDir, '.audit-key') });
+    const handle = buildAuditCommand({ logPath, keyStore, streams });
+    handle.command.hook('preAction', () => {
+      handled = true;
+    });
+    handle.command.hook('postAction', () => {
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `consent` command group: list + grant + revoke.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const consentPath = path.join(dataDir, 'network_consent.yaml');
+    const consentManager = new ConsentManager(consentPath, {
+      promptFn: buildReadlinePrompter(),
+    });
+    const handle = buildConsentCommand({ consentManager, streams });
+    handle.command.hook('preAction', () => {
+      handled = true;
+    });
+    handle.command.hook('postAction', () => {
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `ca` command group: init + rotate + list.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const inventoryPath = path.join(dataDir, 'inventory.yaml');
+    const inventoryManager = new InventoryManager(inventoryPath);
+    const caManager = new SSHCertificateManager({ dataDir });
+    const handle = buildCACommand({ caManager, inventoryManager, streams });
+    handle.command.hook('preAction', () => {
+      handled = true;
     });
     handle.command.hook('postAction', () => {
       exitCode = handle.lastExitCode();
