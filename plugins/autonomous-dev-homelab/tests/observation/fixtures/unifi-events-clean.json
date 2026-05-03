@@ -1,0 +1,4 @@
+[
+  { "key": "EVT_AP_CONNECTED", "ap_mac": "aa:bb:cc:00:00:01", "msg": "AP connected", "time": 1714449000 },
+  { "key": "EVT_WU_CONNECTED", "ap_mac": "aa:bb:cc:00:00:01", "msg": "client joined", "time": 1714449050 }
+]

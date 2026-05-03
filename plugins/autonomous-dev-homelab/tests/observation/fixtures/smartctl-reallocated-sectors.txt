@@ -1,0 +1,9 @@
+smartctl 7.3 (build date Jul  7 2024) [x86_64-linux-6.1.0-22-amd64]
+
+=== START OF READ SMART DATA SECTION ===
+SMART overall-health self-assessment test result: PASSED
+
+ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE
+  1 Raw_Read_Error_Rate     0x000f   100   100   006    Pre-fail  Always       -       0
+  5 Reallocated_Sector_Ct   0x0033   099   099   010    Pre-fail  Always       -       42
+197 Current_Pending_Sector  0x0012   100   100   000    Old_age   Always       -       0

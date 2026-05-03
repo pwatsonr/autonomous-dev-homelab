@@ -1,0 +1,5 @@
+[
+  { "key": "EVT_AP_LOST_CONTACT", "ap_mac": "aa:bb:cc:00:00:01", "msg": "AP lost contact", "time": 1714449501 },
+  { "key": "EVT_AP_LOST_CONTACT", "ap_mac": "aa:bb:cc:00:00:02", "msg": "AP lost contact", "time": 1714449502 },
+  { "key": "EVT_AP_LOST_CONTACT", "ap_mac": "aa:bb:cc:00:00:03", "msg": "AP lost contact", "time": 1714449503 }
+]

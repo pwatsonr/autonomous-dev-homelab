@@ -1,0 +1,4 @@
+[
+  { "key": "EVT_AP_CONNECTED", "ap_mac": "aa:bb:cc:00:00:01", "msg": "AP connected", "time": 1714449000 },
+  { "key": "EVT_AP_LOST_CONTACT", "ap_mac": "aa:bb:cc:00:00:02", "msg": "AP lost contact", "time": 1714449500 }
+]
