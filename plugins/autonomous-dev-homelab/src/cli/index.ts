@@ -22,12 +22,26 @@ import { promises as fs } from 'node:fs';
 import * as yaml from 'js-yaml';
 import type { Consent } from '../consent/types.js';
 import { runDiscover } from './commands/discover.js';
-import { runInventoryList } from './commands/inventory.js';
+import {
+  runInventoryList,
+  runInventoryGet,
+  runInventoryRemove,
+} from './commands/inventory.js';
 import { buildPlatformCommand } from './commands/platform.js';
+import { buildAuditCommand } from './commands/audit.js';
+import { buildConsentCommand } from './commands/consent.js';
+import { buildCACommand } from './commands/ca.js';
+import {
+  enforceAdminIfRequired,
+  buildAdminAuthContext,
+  type AdminCheckFn,
+} from './middleware/admin-auth.js';
 import { SSHCertificateManager } from '../ca/manager.js';
 import { PassphraseProvider } from '../ca/passphrase.js';
 import { ConnectionPool } from '../connection/pool.js';
 import { createConnection } from '../connection/factory.js';
+import { MCPDiscovery } from '../connection/mcp-discovery.js';
+import { AuditKeyStore } from '../audit/key-store.js';
 import { EXIT_INTERNAL, EXIT_OK, EXIT_USAGE } from './exit-codes.js';
 import { printError, type OutputStreams, DEFAULT_STREAMS } from './output.js';
 
@@ -43,6 +57,11 @@ export interface RunCliOptions {
    * --data-dir, then env, then `${cwd}/.autonomous-dev-homelab`.
    */
   resolveDataDir?: (override: string | undefined, env: NodeJS.ProcessEnv) => string;
+  /**
+   * Override the admin-role resolver (SPEC-001-3-04 §"Admin Auth
+   * Middleware"). Tests inject; production uses the env-var/file default.
+   */
+  isAdmin?: AdminCheckFn;
 }
 
 function defaultResolveDataDir(override: string | undefined, env: NodeJS.ProcessEnv): string {
@@ -100,6 +119,39 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
 
   let exitCode: number = EXIT_OK;
   let handled = false;
+  // Set by the admin-auth hook when the operator is rejected. The
+  // dispatcher honours this flag by returning EXIT_USAGE without invoking
+  // the action handler. We thread through `process.exit`-on-reject as a
+  // soft hook so tests can drive the same path without killing the
+  // worker.
+  let adminBlocked = false;
+  const adminExit = (_code: number): void => {
+    adminBlocked = true;
+  };
+  const adminCheckOpts = {
+    streams,
+    exit: adminExit,
+    ...(opts.isAdmin !== undefined ? { isAdmin: opts.isAdmin } : {}),
+  };
+
+  /**
+   * Common preAction wrapper: marks `handled`, then invokes the admin
+   * middleware for the dotted command name. Returns true if the action
+   * should proceed; false if blocked.
+   */
+  const wrapPreAction = async (
+    dottedName: string,
+    dataDir: string,
+  ): Promise<boolean> => {
+    handled = true;
+    const ctx = buildAdminAuthContext(dataDir, env);
+    const ok = await enforceAdminIfRequired(dottedName, ctx, adminCheckOpts);
+    if (!ok) {
+      exitCode = EXIT_USAGE;
+      return false;
+    }
+    return true;
+  };
 
   const program = new Command();
   program
@@ -128,6 +180,7 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       });
       const prober = new PlatformProber();
       const inventoryManager = new InventoryManager(inventoryPath);
+      const mcpDiscovery = new MCPDiscovery({ env });
       // commander's `--no-prompt` flips `cmdOpts.prompt` to false.
       const noPrompt = cmdOpts.prompt === false;
       exitCode = await runDiscover(
@@ -142,6 +195,7 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
           inventoryManager,
           streams,
           listConsents: () => listConsentsFromFile(consentPath),
+          mcpDiscovery,
         },
       );
     });
@@ -181,14 +235,67 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       pool,
       streams,
     });
-    // Mark handled and propagate exit code for any subcommand under
-    // `platform`. The `preSubcommand` hook fires once per invocation.
+    // Mark handled, run admin-auth, then preload the inventory entry.
     handle.command.hook('preAction', async (_thisCommand, actionCommand) => {
-      handled = true;
+      const dottedName = `platform ${actionCommand.name()}`;
+      const proceed = await wrapPreAction(dottedName, dataDir);
+      if (!proceed) return;
       const platformId = actionCommand.args[0];
       if (typeof platformId === 'string') await ensure(platformId);
     });
     handle.command.hook('postAction', () => {
+      if (adminBlocked) return;
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `audit` command group: verify + query. (No admin enforcement.)
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const logPath = path.join(dataDir, 'audit.log');
+    const keyStore = new AuditKeyStore({ keyPath: path.join(dataDir, '.audit-key') });
+    const handle = buildAuditCommand({ logPath, keyStore, streams });
+    handle.command.hook('preAction', async (_t, actionCommand) => {
+      await wrapPreAction(`audit ${actionCommand.name()}`, dataDir);
+    });
+    handle.command.hook('postAction', () => {
+      if (adminBlocked) return;
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `consent` command group: list + grant + revoke. (`revoke` is admin.)
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const consentPath = path.join(dataDir, 'network_consent.yaml');
+    const consentManager = new ConsentManager(consentPath, {
+      promptFn: buildReadlinePrompter(),
+    });
+    const handle = buildConsentCommand({ consentManager, streams });
+    handle.command.hook('preAction', async (_t, actionCommand) => {
+      await wrapPreAction(`consent ${actionCommand.name()}`, dataDir);
+    });
+    handle.command.hook('postAction', () => {
+      if (adminBlocked) return;
+      exitCode = handle.lastExitCode();
+    });
+    program.addCommand(handle.command);
+  }
+
+  // `ca` command group: init + rotate + list. (`init` and `rotate` are admin.)
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const inventoryPath = path.join(dataDir, 'inventory.yaml');
+    const inventoryManager = new InventoryManager(inventoryPath);
+    const caManager = new SSHCertificateManager({ dataDir });
+    const handle = buildCACommand({ caManager, inventoryManager, streams });
+    handle.command.hook('preAction', async (_t, actionCommand) => {
+      await wrapPreAction(`ca ${actionCommand.name()}`, dataDir);
+    });
+    handle.command.hook('postAction', () => {
+      if (adminBlocked) return;
       exitCode = handle.lastExitCode();
     });
     program.addCommand(handle.command);
@@ -197,19 +304,59 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
   const inventoryCmd = program
     .command('inventory')
     .description('Read or manage the discovered-platforms inventory.');
+  inventoryCmd.hook('preAction', async (_t, actionCommand) => {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    await wrapPreAction(`inventory ${actionCommand.name()}`, dataDir);
+  });
   inventoryCmd
     .command('list')
     .description('Print discovered platforms.')
     .option('--type <platform>', 'filter by platform type')
     .option('--json', 'emit JSON to stdout instead of a table')
     .action(async (cmdOpts: { type?: string; json?: boolean }) => {
-      handled = true;
+      if (adminBlocked) return;
       const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
       const inventoryPath = path.join(dataDir, 'inventory.yaml');
       const inventoryManager = new InventoryManager(inventoryPath);
       exitCode = await runInventoryList(
         { type: cmdOpts.type, json: cmdOpts.json === true },
         { inventoryManager, streams },
+      );
+    });
+  inventoryCmd
+    .command('get')
+    .description('Print one platform record (YAML-style or JSON).')
+    .argument('<platform-id>', 'platform identifier')
+    .option('--json', 'emit JSON instead of YAML')
+    .action(async (platformId: string, cmdOpts: { json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const inventoryPath = path.join(dataDir, 'inventory.yaml');
+      const inventoryManager = new InventoryManager(inventoryPath);
+      exitCode = await runInventoryGet(
+        { platformId, json: cmdOpts.json === true },
+        { inventoryManager, streams },
+      );
+    });
+  inventoryCmd
+    .command('remove')
+    .description('Revoke the cert and remove the platform record. (admin)')
+    .argument('<platform-id>', 'platform identifier')
+    .option('--json', 'emit JSON instead of human-readable output')
+    .option('--yes', 'skip the interactive confirmation prompt')
+    .action(async (platformId: string, cmdOpts: { json?: boolean; yes?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const inventoryPath = path.join(dataDir, 'inventory.yaml');
+      const inventoryManager = new InventoryManager(inventoryPath);
+      const caManager = new SSHCertificateManager({ dataDir });
+      exitCode = await runInventoryRemove(
+        {
+          platformId,
+          json: cmdOpts.json === true,
+          ...(cmdOpts.yes === true ? { yes: true } : {}),
+        },
+        { inventoryManager, caManager, streams },
       );
     });
 

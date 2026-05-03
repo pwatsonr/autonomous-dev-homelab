@@ -1,11 +1,13 @@
 /**
  * `autonomous-dev-homelab platform ...` subcommand group. Implements
- * SPEC-001-2-04 §"CLI Command Surface".
+ * SPEC-001-2-04 §"CLI Command Surface" and SPEC-001-3-04 §"`platform exec`".
  *
  * Subcommands:
  *   platform install-ca   <id>   [--json] [--krl]
  *   platform connect-test <id>   [--json] [--timeout <ms>]
  *   platform rotate-key   <id>   [--json] [--force]
+ *   platform exec         <id> -- <command...>           # admin
+ *                                [--json] [--timeout <secs>]
  *
  * The factory function `buildPlatformCommand(deps)` returns a Commander
  * subcommand. `deps` injects InventoryManager, SSHCertificateManager,
@@ -98,6 +100,38 @@ export function buildPlatformCommand(deps: PlatformCommandDeps): PlatformCommand
         cmdOpts: { json?: boolean; timeout: number },
       ): Promise<void> => {
         lastExit = await runConnectTest(platformId, cmdOpts, deps, streams);
+      },
+    );
+
+  // ---- exec -------------------------------------------------------------
+  // SPEC-001-3-04: `platform exec <id> -- <command...>`. Destructive,
+  // marked admin via `ADMIN_REQUIRED_COMMANDS` and enforced by the
+  // dispatcher's admin-auth middleware.
+  cmd
+    .command('exec')
+    .description('Run a single command against an inventoried platform. (admin)')
+    .argument('<platform-id>', 'platform identifier from inventory')
+    .argument('<command...>', 'command and arguments (use `--` to separate)')
+    .option('--json', 'emit a JSON exec result document')
+    .option(
+      '--timeout <secs>',
+      'overall timeout in seconds (default: 60)',
+      (v) => Number.parseInt(v, 10),
+      60,
+    )
+    .action(
+      async (
+        platformId: string,
+        commandTokens: string[],
+        cmdOpts: { json?: boolean; timeout: number },
+      ): Promise<void> => {
+        lastExit = await runPlatformExec(
+          platformId,
+          commandTokens,
+          cmdOpts,
+          deps,
+          streams,
+        );
       },
     );
 
@@ -373,6 +407,126 @@ async function runRotateKey(
       `  4. Verify: autonomous-dev-homelab platform connect-test ${platformId}\n`,
   );
   return EXIT_OK;
+}
+
+// ===== exec ==============================================================
+
+/**
+ * Run an arbitrary shell command on a platform via the connection pool.
+ *
+ * The pool's auto-selected transport (MCP if `connection.mcp_endpoint` is
+ * set; SSH otherwise) is exercised via `pool.getConnection(platformId)`.
+ * `command_executed` and `connection_*` audit events are emitted by the
+ * connection layer (SPEC-001-3-02) — this command does not emit
+ * directly.
+ *
+ * Failure modes (SPEC-001-3-04 §`platform exec`):
+ *   - Unknown platform-id   → EXIT_USAGE, "no platform '<id>' in inventory"
+ *   - Connection failed      → EXIT_CONNECT_FAIL, error_code surfaced
+ *   - Non-zero command exit  → EXIT_CONNECT_FAIL, result still printed
+ *   - Timeout (--timeout S) → EXIT_CONNECT_FAIL, result has exit_code:-1
+ *                             and error: 'timeout'
+ */
+async function runPlatformExec(
+  platformId: string,
+  commandTokens: string[],
+  opts: { json?: boolean; timeout: number },
+  deps: PlatformCommandDeps,
+  streams: OutputStreams,
+): Promise<number> {
+  const platform = await deps.inventoryManager.getPlatform(platformId);
+  if (platform === null) {
+    printError(`no platform '${platformId}' in inventory`, streams);
+    return EXIT_USAGE;
+  }
+  // The CLI invocation is `platform exec <id> -- <cmd> <args...>`. Commander
+  // hands us every post-`--` token as a single array; rejoining with spaces
+  // is sufficient for SSH/MCP exec which accept a string command. Operators
+  // with shell-special characters quote them at the OS level.
+  const command = commandTokens.join(' ');
+  if (command === '') {
+    printError('platform exec requires a command (use `--` to separate)', streams);
+    return EXIT_USAGE;
+  }
+  const timeoutSecs = Number.isFinite(opts.timeout) && opts.timeout > 0 ? opts.timeout : 60;
+  const timeoutMs = timeoutSecs * 1000;
+
+  let conn: Connection | undefined;
+  let connectError: Error | undefined;
+  let execResult: { stdout: string; stderr: string; exitCode: number; durationMs: number } | undefined;
+  let timedOut = false;
+  const wallStart = Date.now();
+  try {
+    conn = await withTimeout(
+      deps.pool.getConnection(platformId),
+      timeoutMs,
+      `connect timed out after ${timeoutSecs}s`,
+    );
+  } catch (err) {
+    connectError = err as Error;
+    if (/timed out/.test(connectError.message)) timedOut = true;
+  }
+  if (conn !== undefined && connectError === undefined) {
+    try {
+      execResult = await withTimeout(
+        conn.exec(command, { timeoutMs }),
+        timeoutMs,
+        `exec timed out after ${timeoutSecs}s`,
+      );
+    } catch (err) {
+      connectError = err as Error;
+      if (/timed out/.test(connectError.message)) timedOut = true;
+    }
+  }
+  const wallMs = Date.now() - wallStart;
+
+  // Build a synthetic result on timeout so JSON output stays uniform.
+  if (timedOut && execResult === undefined) {
+    execResult = { stdout: '', stderr: '', exitCode: -1, durationMs: wallMs };
+  }
+
+  const ok =
+    connectError === undefined && execResult !== undefined && execResult.exitCode === 0;
+  if (opts.json === true) {
+    const payload: Record<string, unknown> = {
+      ok,
+      platform_id: platformId,
+      command,
+      stdout: execResult?.stdout ?? '',
+      stderr: execResult?.stderr ?? '',
+      exit_code: execResult?.exitCode ?? -1,
+      duration_ms: execResult?.durationMs ?? wallMs,
+    };
+    if (timedOut) payload['error'] = 'timeout';
+    else if (connectError !== undefined) {
+      payload['error'] = {
+        name: connectError.name,
+        message: connectError.message,
+        code: (connectError as Error & { code?: string }).code ?? null,
+      };
+    }
+    printJson(payload, streams);
+    return ok ? EXIT_OK : EXIT_CONNECT_FAIL;
+  }
+
+  // Plain output: the SPEC's example layout.
+  if (execResult !== undefined) {
+    if (execResult.stdout !== '') streams.stdout(execResult.stdout);
+    if (execResult.stderr !== '') streams.stderr(execResult.stderr);
+    const tag = timedOut ? '  error: timeout' : '';
+    streams.stdout(
+      `exit: ${execResult.exitCode}  duration: ${execResult.durationMs}ms${tag}\n`,
+    );
+    return ok ? EXIT_OK : EXIT_CONNECT_FAIL;
+  }
+  // Pure connection failure (no exec): surface via stderr.
+  if (connectError !== undefined) {
+    printError(
+      `connection failed: ${connectError.name}: ${connectError.message}`,
+      streams,
+    );
+  }
+  return EXIT_CONNECT_FAIL;
 }
 
 async function defaultConfirm(msg: string): Promise<boolean> {

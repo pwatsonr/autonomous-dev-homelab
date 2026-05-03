@@ -11,7 +11,9 @@
  *   Connection's own bookkeeping; the pool also stamps it on hand-out).
  */
 
-import type { Connection } from './base.js';
+import type { Connection, ExecOptions, ExecResult } from './base.js';
+import type { AuditWriter } from '../audit/writer.js';
+import { redactCommand } from '../audit/redact.js';
 
 export interface ConnectionPoolOptions {
   idleTimeoutMs?: number;
@@ -49,10 +51,12 @@ export class ConnectionPool {
   private reaperHandle?: ReturnType<typeof setInterval>;
   private readonly clock: () => number;
 
+  private readonly auditWriter?: AuditWriter;
+
   constructor(
     opts: ConnectionPoolOptions,
     factory: PoolConnectionFactory,
-    deps: { logger?: ConnectionPoolLogger; clock?: () => number } = {},
+    deps: { logger?: ConnectionPoolLogger; clock?: () => number; auditWriter?: AuditWriter } = {},
   ) {
     this.factory = factory;
     this.idleTimeoutMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -60,6 +64,7 @@ export class ConnectionPool {
     this.reapIntervalMs = opts.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS;
     this.logger = deps.logger ?? NULL_LOGGER;
     this.clock = deps.clock ?? (() => Date.now());
+    if (deps.auditWriter !== undefined) this.auditWriter = deps.auditWriter;
   }
 
   size(): number {
@@ -150,9 +155,86 @@ export class ConnectionPool {
       await this.evictLRU();
     }
     const conn = this.factory(platformId);
-    await conn.connect();
+    try {
+      await conn.connect();
+    } catch (err) {
+      // Emit connection_failed BEFORE rethrowing so the audit captures
+      // the attempt regardless of caller behavior.
+      if (this.auditWriter !== undefined) {
+        const e = err as Error & { code?: string };
+        await this.auditWriter
+          .append(
+            'connection_failed',
+            {
+              transport: conn.getCapabilities()?.transport ?? null,
+              error_code: e.code ?? e.name ?? 'unknown',
+              error_message: e.message,
+            },
+            { platform: platformId },
+          )
+          .catch(() => {
+            /* audit-on-failure must not mask the original error */
+          });
+      }
+      throw err;
+    }
     this.entries.set(platformId, { conn, lastUsedAt: this.clock() });
+    if (this.auditWriter !== undefined) {
+      this.installExecAuditing(conn);
+      await this.auditWriter.append(
+        'connection_opened',
+        {
+          transport: conn.getCapabilities()?.transport ?? null,
+          hostname: conn.getCapabilities()?.hostname ?? null,
+        },
+        { platform: platformId },
+      );
+    }
     return conn;
+  }
+
+  /**
+   * Wrap `conn.exec` with an audit-emitting decorator. Mutates the
+   * instance once; subsequent installs are no-ops thanks to a marker.
+   */
+  private installExecAuditing(conn: Connection): void {
+    const writer = this.auditWriter;
+    if (writer === undefined) return;
+    const wrapped = conn as Connection & { __auditWrapped?: true };
+    if (wrapped.__auditWrapped === true) return;
+    const originalExec = wrapped.exec.bind(wrapped);
+    wrapped.exec = async (command: string, opts?: ExecOptions): Promise<ExecResult> => {
+      let result: ExecResult | undefined;
+      let error: Error | undefined;
+      try {
+        result = await originalExec(command, opts);
+        return result;
+      } catch (err) {
+        error = err as Error;
+        throw err;
+      } finally {
+        const payload: Record<string, unknown> = {
+          command: redactCommand(command),
+        };
+        if (result !== undefined) {
+          payload['exit_code'] = result.exitCode;
+          payload['duration_ms'] = result.durationMs;
+        } else if (error !== undefined) {
+          payload['exit_code'] = -1;
+          payload['error'] = error.message;
+        }
+        await writer
+          .append('command_executed', payload, { platform: wrapped.platformId })
+          .catch(() => {
+            /* swallow: do not mask exec result */
+          });
+      }
+    };
+    Object.defineProperty(wrapped, '__auditWrapped', {
+      value: true,
+      enumerable: false,
+      writable: false,
+    });
   }
 
   private async evict(platformId: string): Promise<void> {
@@ -166,6 +248,17 @@ export class ConnectionPool {
         platformId,
         error: (err as Error).message,
       });
+    }
+    if (this.auditWriter !== undefined) {
+      await this.auditWriter
+        .append(
+          'connection_closed',
+          { transport: entry.conn.getCapabilities()?.transport ?? null },
+          { platform: platformId },
+        )
+        .catch(() => {
+          /* swallow: pool eviction must not surface audit errors */
+        });
     }
   }
 

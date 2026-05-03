@@ -23,9 +23,15 @@ import { ConsentManager } from '../../consent/manager.js';
 import { PlatformProber } from '../../discovery/prober.js';
 import { InventoryManager } from '../../discovery/inventory.js';
 import { getDefaultPermittedPorts } from '../../discovery/fingerprints.js';
+import {
+  MCPDiscovery,
+  type HomelabPlatformId,
+  type MCPServerInfo,
+} from '../../connection/mcp-discovery.js';
 import type { Consent } from '../../consent/types.js';
 import type { MatchedPlatform } from '../../discovery/types.js';
 import type { Platform } from '../../discovery/inventory-types.js';
+import type { AuditWriter } from '../../audit/writer.js';
 import {
   EXIT_OK,
   EXIT_USAGE,
@@ -57,6 +63,22 @@ export interface DiscoverDeps {
    * fake. Production callers must provide one when `--cidr` is omitted.
    */
   listConsents?: () => Promise<Consent[]>;
+  /**
+   * Optional MCP discovery; when provided, each new/updated inventory
+   * entry's `connection.mcp_endpoint` is set to the matching
+   * `mcp-server-*` name (or `null` if the operator has not installed
+   * one). When absent, the field is left untouched. Implements
+   * SPEC-001-3-01 §"Inventory Wiring".
+   */
+  mcpDiscovery?: MCPDiscovery;
+  /**
+   * Optional audit writer (SPEC-001-3-02). When provided, emits a
+   * `discovery_started` entry at the start of the run and a
+   * `discovery_completed` entry just before returning, regardless of
+   * exit code. Audit-write errors are logged to stderr but do NOT
+   * change the discover exit code (read-only command).
+   */
+  auditWriter?: AuditWriter;
 }
 
 interface ScanReport {
@@ -70,6 +92,22 @@ interface ScanReport {
 /** Build the deterministic inventory id from a match. */
 function buildPlatformId(match: MatchedPlatform): string {
   return `${match.platformType}-${match.ip.replaceAll('.', '-')}`;
+}
+
+/**
+ * Resolve the MCP endpoint name for an inventory `platformType`, given a
+ * pre-built map. Returns `null` when MCP discovery is wired but no server
+ * is installed for this platform (so the inventory clears stale state),
+ * and `null` when MCP discovery is not wired (caller suppresses writes).
+ */
+function resolveMcpEndpoint(
+  platformType: MatchedPlatform['platformType'],
+  mcpByPlatform: Map<HomelabPlatformId, string> | null,
+): string | null {
+  if (mcpByPlatform === null) return null;
+  const id = MCPDiscovery.toHomelabPlatformId(platformType);
+  if (id === null) return null;
+  return mcpByPlatform.get(id) ?? null;
 }
 
 /** Returns the first usable host inside the CIDR (.1 host bit set). */
@@ -111,6 +149,63 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
     return EXIT_USAGE;
   }
 
+  // Emit discovery_started after arg validation so a usage error does
+  // not trigger an audit entry. Audit failures are non-fatal here
+  // (discover is read-only — the operator can still see results).
+  if (deps.auditWriter !== undefined) {
+    try {
+      await deps.auditWriter.append('discovery_started', {
+        cidr: args.cidr ?? null,
+        json_mode: jsonMode,
+      });
+    } catch (err) {
+      streams.stderr(`audit_emit_failed: discovery_started: ${(err as Error).message}\n`);
+    }
+  }
+
+  // Track the run-summary fields so the finally-block can emit a
+  // self-describing `discovery_completed` regardless of which branch
+  // returned the exit code.
+  const runReport: { scanned: number; failed: number; matches: number; addedIds: number; updatedIds: number } = {
+    scanned: 0,
+    failed: 0,
+    matches: 0,
+    addedIds: 0,
+    updatedIds: 0,
+  };
+  let exitCode = EXIT_OK;
+  try {
+    exitCode = await runDiscoverBody(args, deps, streams, jsonMode, noPrompt, now, runReport);
+    return exitCode;
+  } finally {
+    if (deps.auditWriter !== undefined) {
+      try {
+        await deps.auditWriter.append('discovery_completed', {
+          cidr: args.cidr ?? null,
+          exit_code: exitCode,
+          scanned_cidrs: runReport.scanned,
+          failed_cidrs: runReport.failed,
+          matches: runReport.matches,
+          added_ids: runReport.addedIds,
+          updated_ids: runReport.updatedIds,
+        });
+      } catch (err) {
+        streams.stderr(`audit_emit_failed: discovery_completed: ${(err as Error).message}\n`);
+      }
+    }
+  }
+}
+
+/** Body of `runDiscover`; refactored for the audit start/complete wrap. */
+async function runDiscoverBody(
+  args: DiscoverArgs,
+  deps: DiscoverDeps,
+  streams: OutputStreams,
+  jsonMode: boolean,
+  noPrompt: boolean,
+  now: () => Date,
+  runReport: { scanned: number; failed: number; matches: number; addedIds: number; updatedIds: number },
+): Promise<number> {
   // 2. Resolve target CIDR list.
   let cidrs: string[];
   if (args.cidr !== undefined) {
@@ -143,6 +238,22 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
       return EXIT_NO_CONSENT;
     }
     cidrs = eligible;
+  }
+
+  // 2b. Resolve MCP server map (best-effort; null when discovery not wired).
+  let mcpByPlatform: Map<HomelabPlatformId, string> | null = null;
+  if (deps.mcpDiscovery !== undefined) {
+    let mcpServers: MCPServerInfo[] = [];
+    try {
+      mcpServers = await deps.mcpDiscovery.discover();
+    } catch {
+      // Discovery is best-effort; an unexpected throw must not block scan.
+      mcpServers = [];
+    }
+    mcpByPlatform = new Map<HomelabPlatformId, string>();
+    for (const s of mcpServers) {
+      mcpByPlatform.set(s.platform, s.name);
+    }
   }
 
   // 3. Per-CIDR: ensure consent, scan, write inventory.
@@ -214,13 +325,24 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
       const id = buildPlatformId(match);
       const existing = await deps.inventoryManager.getPlatform(id);
       const nowIso = now().toISOString();
+      // Compute MCP endpoint per-platform when discovery is wired. Null
+      // explicitly clears stale endpoints (operator uninstalled a server).
+      const mcpEndpoint = resolveMcpEndpoint(match.platformType, mcpByPlatform);
       if (existing) {
+        const updateConn =
+          mcpByPlatform !== null
+            ? {
+                ...(existing.connection ?? {}),
+                mcp_endpoint: mcpEndpoint,
+              }
+            : existing.connection;
         await deps.inventoryManager.updatePlatform(id, {
           last_seen: nowIso,
           metadata: {
             ...(existing.metadata ?? {}),
             confidence: match.confidence,
           },
+          ...(mcpByPlatform !== null ? { connection: updateConn } : {}),
         });
         report.updatedIds.push(id);
         if (!jsonMode) {
@@ -240,6 +362,11 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
             confidence: match.confidence,
             protocol: match.protocol,
           },
+          ...(mcpByPlatform !== null
+            ? {
+                connection: { mcp_endpoint: mcpEndpoint },
+              }
+            : {}),
         };
         await deps.inventoryManager.addPlatform(platform);
         report.addedIds.push(id);
@@ -271,6 +398,14 @@ export async function runDiscover(args: DiscoverArgs, deps: DiscoverDeps): Promi
       `Discovered ${report.matches.length} platforms (${report.addedIds.length} new, ${report.updatedIds.length} updated) across ${report.scanned} CIDRs.\n`,
     );
   }
+
+  // Mirror local report into runReport so the audit `discovery_completed`
+  // entry (emitted by the wrapper's finally block) can describe the run.
+  runReport.scanned = report.scanned;
+  runReport.failed = report.failed;
+  runReport.matches = report.matches.length;
+  runReport.addedIds = report.addedIds.length;
+  runReport.updatedIds = report.updatedIds.length;
 
   // 5. Exit code: success if at least one CIDR scanned cleanly; partial
   //    if any CIDR failed; full failure (kept as no-consent in degenerate
