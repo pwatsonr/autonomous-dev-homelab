@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "some-other-server": {
+      "command": "/usr/bin/some-server"
+    }
+  }
+}

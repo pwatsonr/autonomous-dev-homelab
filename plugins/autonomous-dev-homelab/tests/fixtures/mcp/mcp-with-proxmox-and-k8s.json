@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mcp-server-proxmox": {
+      "command": "node",
+      "args": ["/usr/local/lib/mcp-proxmox/index.js"]
+    },
+    "mcp-server-kubernetes": {
+      "command": ["python3", "-m", "mcp_kubernetes"]
+    },
+    "mcp-server-foo": {
+      "command": "/usr/bin/some-other-server"
+    }
+  }
+}

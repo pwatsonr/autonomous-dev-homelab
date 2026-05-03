@@ -16,7 +16,12 @@ export type PlatformType =
 
 export interface Connection {
   ssh_cert_path?: string;
-  mcp_endpoint?: string;
+  /**
+   * MCP server name (e.g. `"mcp-server-proxmox"`) when the operator has
+   * installed one for this platform; `null` when MCP discovery ran but
+   * found none; absent (`undefined`) when discovery never ran.
+   */
+  mcp_endpoint?: string | null;
   [key: string]: unknown;
 }
 

@@ -28,6 +28,7 @@ import { SSHCertificateManager } from '../ca/manager.js';
 import { PassphraseProvider } from '../ca/passphrase.js';
 import { ConnectionPool } from '../connection/pool.js';
 import { createConnection } from '../connection/factory.js';
+import { MCPDiscovery } from '../connection/mcp-discovery.js';
 import { EXIT_INTERNAL, EXIT_OK, EXIT_USAGE } from './exit-codes.js';
 import { printError, type OutputStreams, DEFAULT_STREAMS } from './output.js';
 
@@ -128,6 +129,7 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       });
       const prober = new PlatformProber();
       const inventoryManager = new InventoryManager(inventoryPath);
+      const mcpDiscovery = new MCPDiscovery({ env });
       // commander's `--no-prompt` flips `cmdOpts.prompt` to false.
       const noPrompt = cmdOpts.prompt === false;
       exitCode = await runDiscover(
@@ -142,6 +144,7 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
           inventoryManager,
           streams,
           listConsents: () => listConsentsFromFile(consentPath),
+          mcpDiscovery,
         },
       );
     });

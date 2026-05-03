@@ -32,7 +32,7 @@
           "type": "object",
           "properties": {
             "ssh_cert_path": { "type": "string" },
-            "mcp_endpoint": { "type": "string" }
+            "mcp_endpoint": { "type": ["string", "null"] }
           },
           "additionalProperties": true
         }
