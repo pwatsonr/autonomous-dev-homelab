@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "reason": "FailedScheduling",
+      "count": 2,
+      "message": "0/3 nodes available",
+      "involvedObject": { "kind": "Pod", "name": "noisy-1" }
+    },
+    {
+      "reason": "Unhealthy",
+      "count": 5,
+      "message": "Liveness probe failed",
+      "involvedObject": { "kind": "Pod", "name": "noisy-2" }
+    },
+    {
+      "reason": "FailedMount",
+      "count": 1,
+      "message": "MountVolume.SetUp failed",
+      "involvedObject": { "kind": "Pod", "name": "noisy-3" }
+    }
+  ]
+}

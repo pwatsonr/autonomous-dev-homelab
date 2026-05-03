@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "reason": "BackOff",
+      "count": 7,
+      "message": "Back-off restarting failed container",
+      "involvedObject": { "kind": "Pod", "name": "web-7c" }
+    },
+    {
+      "reason": "BackOff",
+      "count": 3,
+      "message": "Back-off restarting",
+      "involvedObject": { "kind": "Pod", "name": "api-2d" }
+    },
+    {
+      "reason": "OOMKilled",
+      "count": 1,
+      "message": "Container exceeded memory limit",
+      "involvedObject": { "kind": "Pod", "name": "worker-9z" }
+    }
+  ]
+}
