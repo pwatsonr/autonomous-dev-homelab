@@ -1,0 +1,12 @@
+# Evidence: Discovery Run — REQ-000055
+# Status: PENDING LIVE EXECUTION
+# Command: homelab discover --json
+#
+# This evidence file requires live network access to:
+#   gallifrey-lab-01 (Docker Swarm manager)
+#   gallifrey-lab-02 (Docker Swarm worker)
+#   unraid.pwatson.space (Unraid/Tower NAS)
+#
+# To capture live:
+#   AUTONOMOUS_DEV_HOMELAB_CONFIG=~/.autonomous-dev-homelab/homelab.config.yaml \
+#   node dist/cli/main.js discover --json 2>&1 | tee docs/evidence/REQ-000055/03-discover.log

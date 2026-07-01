@@ -1,19 +1,31 @@
 {
   "name": "autonomous-dev-homelab",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Homelab platform discovery, connection, and lifecycle automation plugin for autonomous-dev.",
   "type": "module",
+  "bin": {
+    "homelab": "./dist/cli/main.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
   "scripts": {
     "test": "jest --passWithNoTests",
     "test:coverage": "jest --coverage",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bash scripts/build.sh",
+    "build:all": "bash scripts/build.sh",
+    "package": "bash scripts/package.sh",
+    "secret-scan": "bash scripts/secret-scan.sh dist/"
   },
   "dependencies": {
     "ajv": "^8.20.0",
     "ajv-formats": "^2.1.1",
     "commander": "^11.1.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

@@ -1,0 +1,175 @@
+{
+  "id": "REQ-000055",
+  "status": "running",
+  "current_phase": "code",
+  "priority": 1,
+  "created_at": "2026-06-30T17:12:46.788Z",
+  "updated_at": "2026-07-01T22:41:41Z",
+  "title": "Make the autonomous-dev-homelab plugin actually operate Patrick's live homelab end-to-end and produc",
+  "description": "Make the autonomous-dev-homelab plugin actually operate Patrick's live homelab end-to-end and produce a deployable, installable build. The design corpus (PRD-001, TDD-001/002, 6 plans, 29 specs) and ~697 unit tests are complete, but NOTHING has been exercised live: the plugin has never connected to real hosts, the CLI/build have never been run for real (tsc currently fails at tests/cli/test-safety-cli.test.ts:133 with TS2493 tuple-index error), there is no deploy/packaging path, homelab connection config + secrets are unwired, and the portal panel has never been tested.\n\nDEFINITION OF DONE: a homelab operator can install the plugin and run discover -> connect -> observe -> safety-gated autofix against the live environment:\n- Docker Swarm: manager gallifrey-lab-01, worker gallifrey-lab-02 (services: Portainer, Sonarr, Radarr, SABnzbd, Authentik, nginx-proxy-manager/NPM, Postgres, OpenSearch).\n- Unraid \"Tower\" (unraid.pwatson.space): Plex, 80TB array, autofan.\n- Connection: MCP-first with SSH fallback; secrets retrieved from HashiCorp Vault (no plaintext credentials anywhere).\n\nSCOPE:\n1. Fix the build/typecheck/CLI so `npm ci && npm run build && node dist/cli/index.js --help` works end to end; add a build script and packaging so the plugin is installable as a Claude Code plugin.\n2. Wire real connection + inventory against the hosts above (discovery fingerprints, MCP/SSH connect, audit log).\n3. Wire configuration + Vault-backed secrets to the actual environment.\n4. Make the observe -> autofix loop runnable against the live homelab while PRESERVING the safety model (destructiveness ladder, typed-CONFIRM modal, 24h delay). Destructive or live-mutating actions must default to L0 human confirmation.\n5. Verify the portal panel + SSE metrics actually render for this plugin.\n6. Deliver a deploy path, an operator runbook, and end-to-end verification evidence.\n\nKeep all existing tests green and add live/integration coverage where it can be done safely. Do not weaken or bypass the safety gates to make live operations pass.",
+  "target_repo": "/Users/pwatson/codebase/autonomous-dev-homelab",
+  "source": "cli",
+  "type": "infra",
+  "task_size": "standard",
+  "blocked_by": [],
+  "phase_history": [
+    {
+      "phase": "prd",
+      "status": "pass",
+      "completed_at": "2026-07-01T21:50:00Z",
+      "artifact": "docs/prd/REQ-000055-req-000055.md"
+    },
+    {
+      "state": "prd",
+      "entered_at": null,
+      "exited_at": "2026-07-01T21:53:30Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "prd_review",
+      "entered_at": "2026-07-01T21:53:30Z",
+      "exited_at": "2026-07-01T21:58:19Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "tdd",
+      "entered_at": "2026-07-01T21:58:19Z",
+      "exited_at": null,
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": null
+    },
+    {
+      "phase": "tdd",
+      "status": "pass",
+      "completed_at": "2026-07-01T22:15:00Z",
+      "artifact": "docs/tdd/REQ-000055-req-000055.md"
+    },
+    {
+      "state": "tdd",
+      "entered_at": null,
+      "exited_at": "2026-07-01T22:10:31Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "tdd_review",
+      "entered_at": "2026-07-01T22:10:31Z",
+      "exited_at": "2026-07-01T22:14:46Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "plan",
+      "entered_at": "2026-07-01T22:14:46Z",
+      "exited_at": "2026-07-01T22:22:14Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "plan_review",
+      "entered_at": "2026-07-01T22:22:14Z",
+      "exited_at": "2026-07-01T22:26:32Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "spec",
+      "entered_at": "2026-07-01T22:26:32Z",
+      "exited_at": "2026-07-01T22:35:57Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "spec_review",
+      "entered_at": "2026-07-01T22:35:57Z",
+      "exited_at": "2026-07-01T22:41:41Z",
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": "completed"
+    },
+    {
+      "state": "code",
+      "entered_at": "2026-07-01T22:41:41Z",
+      "exited_at": null,
+      "session_id": null,
+      "turns_used": 0,
+      "cost_usd": 0,
+      "retry_count": 0,
+      "soft_timeout_count": 0,
+      "exit_reason": null
+    }
+  ],
+  "phase_overrides": [
+    "intake",
+    "prd",
+    "prd_review",
+    "tdd",
+    "tdd_review",
+    "plan",
+    "plan_review",
+    "spec",
+    "spec_review",
+    "code",
+    "code_review",
+    "integration",
+    "deploy",
+    "monitor"
+  ],
+  "current_phase_metadata": {
+    "session_active": true,
+    "dispatched_at": "2026-07-01T23:32:58Z",
+    "dispatched_phase": "code",
+    "prd_completed_at": "2026-07-01T21:50:00Z",
+    "gate_entered_at": "2026-07-01T22:35:57Z",
+    "soft_timeout_count": 0,
+    "tdd_completed_at": "2026-07-01T22:15:00Z",
+    "self_heal": {
+      "excluded_reviewers": [],
+      "review_chain_disabled": false,
+      "review_chain_disabled_at": null,
+      "review_chain_disabled_for_phase": null
+    }
+  },
+  "cost_accrued_usd": 6.3420655,
+  "turn_count": 0,
+  "escalation_count": 0,
+  "schema_version": 1,
+  "error": null
+}

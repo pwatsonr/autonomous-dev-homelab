@@ -1,0 +1,24 @@
+# Evidence: Post-Discovery Inventory — REQ-000055
+# Status: PENDING LIVE EXECUTION
+# Command: homelab inventory list
+#
+# To capture live:
+#   node dist/cli/main.js inventory list 2>&1 | tee docs/evidence/REQ-000055/04-inventory.yaml
+#
+# Expected schema (per src/discovery/inventory-types.ts):
+#
+# platforms:
+#   gallifrey-lab-01:
+#     type: docker-swarm-manager
+#     address: gallifrey-lab-01
+#     transport_last_used: mcp
+#     observed_services: [portainer, sonarr, radarr, sabnzbd, authentik, nginx-proxy-manager, postgres, opensearch]
+#     expected_services: [portainer, sonarr, radarr, sabnzbd, authentik, nginx-proxy-manager, postgres, opensearch]
+#   gallifrey-lab-02:
+#     type: docker-swarm-worker
+#     address: gallifrey-lab-02
+#     transport_last_used: ssh
+#   unraid.pwatson.space:
+#     type: unraid
+#     address: unraid.pwatson.space
+#     transport_last_used: ssh

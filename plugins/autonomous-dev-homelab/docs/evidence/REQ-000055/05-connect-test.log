@@ -1,0 +1,19 @@
+# Evidence: Connect Test — REQ-000055
+# Status: PENDING LIVE EXECUTION
+# Command: homelab connect test --json
+#
+# Requires: homelab.config.yaml, Vault running at https://vault.pwatson.space:8200,
+#           VAULT_ROLE_ID and VAULT_SECRET_ID env vars set.
+#
+# To capture live:
+#   AUTONOMOUS_DEV_HOMELAB_CONFIG=~/.autonomous-dev-homelab/homelab.config.yaml \
+#   VAULT_ROLE_ID=<id> VAULT_SECRET_ID=<secret> \
+#   node dist/cli/main.js connect test --json 2>&1 | tee docs/evidence/REQ-000055/05-connect-test.log
+#
+# Expected output shape:
+# [
+#   { "host": "gallifrey-lab-01", "transport": "ssh", "outcome": "ok", "latencyMs": 87 },
+#   { "host": "gallifrey-lab-02", "transport": "ssh", "outcome": "ok", "latencyMs": 92 },
+#   { "host": "unraid.pwatson.space", "transport": "ssh", "outcome": "ok", "latencyMs": 110 }
+# ]
+# Exit code: 0

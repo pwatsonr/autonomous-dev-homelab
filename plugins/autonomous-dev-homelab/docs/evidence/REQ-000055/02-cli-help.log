@@ -1,0 +1,39 @@
+# Evidence: CLI Help — REQ-000055
+# Captured: 2026-07-01
+# Command: node dist/cli/main.js --help
+
+Usage: autonomous-dev-homelab [options] [command]
+
+Homelab platform discovery, connection, and lifecycle automation.
+
+Options:
+  --data-dir <path>             directory for consent + inventory state files
+  -h, --help                    display help for command
+
+Commands:
+  discover [options]            Probe a CIDR range for known homelab platforms.
+  platform                      Per-platform CA install, connection check, and
+                                key rotation.
+  audit                         Verify and query the homelab audit log.
+  consent                       List, grant, or revoke per-CIDR network scan
+                                consents.
+  ca                            SSH certificate-authority lifecycle (init,
+                                rotate, list).
+  observe                       Run probes, list observations, or manually
+                                promote one to autonomous-dev intake.
+  safety                        Inspect safety attributes of pending actions.
+  cancel-action [options] <id>  Cancel a pending architectural-action delay.
+  migrations                    Inspect homelab migration state.
+  metrics                       Inspect homelab safety + observability metrics.
+  portal [options]              Open the homelab portal panel in the operator
+                                browser.
+  config                        Config management.
+  vault                         Vault integration commands.
+  autofix                       Manage autofix proposals and actions.
+  connect                       Test connectivity to homelab hosts via MCP or
+                                SSH.
+  inventory                     Read or manage the discovered-platforms
+                                inventory.
+  help [command]                display help for command
+
+Exit code: 0

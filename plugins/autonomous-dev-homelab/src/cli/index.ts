@@ -37,6 +37,11 @@ import { buildCancelActionCommand } from './commands/cancel-action.js';
 import { buildMigrationsCommand } from './commands/migrations.js';
 import { buildMetricsCommand } from './commands/metrics.js';
 import { buildPortalCommand } from './commands/portal.js';
+import { buildConfigCommand } from './commands/config-validate.js';
+import { buildVaultCommand } from './commands/vault-ping.js';
+import { buildAutofixCommand } from './commands/autofix.js';
+import { assembleRuntime } from '../live/bootstrap.js';
+import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
 import { DedupCache } from '../observation/dedup.js';
 import { ObservationStore } from '../observation/persistence.js';
@@ -52,6 +57,7 @@ import { ConnectionPool } from '../connection/pool.js';
 import { createConnection } from '../connection/factory.js';
 import { MCPDiscovery } from '../connection/mcp-discovery.js';
 import { AuditKeyStore } from '../audit/key-store.js';
+import { AuditWriter } from '../audit/writer.js';
 import { EXIT_INTERNAL, EXIT_OK, EXIT_USAGE } from './exit-codes.js';
 import { printError, type OutputStreams, DEFAULT_STREAMS } from './output.js';
 
@@ -398,6 +404,71 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     program.addCommand(portal.command);
   }
 
+  // `config` command group: validate.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const configHandle = buildConfigCommand({ env, streams });
+    configHandle.command.hook('preAction', () => { handled = true; });
+    configHandle.command.hook('postAction', () => { exitCode = configHandle.lastExitCode(); });
+    void dataDir; // config commands don't use dataDir directly
+    program.addCommand(configHandle.command);
+  }
+
+  // `vault` command group: ping.
+  {
+    const vaultHandle = buildVaultCommand({ env, streams });
+    vaultHandle.command.hook('preAction', () => { handled = true; });
+    vaultHandle.command.hook('postAction', () => { exitCode = vaultHandle.lastExitCode(); });
+    program.addCommand(vaultHandle.command);
+  }
+
+  // `autofix` command group: propose / dry-run / abort-pending.
+  // Needs an AuditWriter; uses the same dataDir as the rest.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const logPath = path.join(dataDir, 'audit.log');
+    const keyStore = new AuditKeyStore({ keyPath: path.join(dataDir, '.audit-key') });
+    const auditWriter = new AuditWriter({ logPath, keyStore });
+    const autofixHandle = buildAutofixCommand({ audit: auditWriter, streams, dataDir });
+    autofixHandle.command.hook('preAction', () => { handled = true; });
+    autofixHandle.command.hook('postAction', () => { exitCode = autofixHandle.lastExitCode(); });
+    program.addCommand(autofixHandle.command);
+  }
+
+  // `connect` command: homelab connect test [--host <h>] [--json]
+  // Lazily loads the full runtime (config + Vault) only when invoked.
+  {
+    const connectCmd = new Command('connect')
+      .description('Test connectivity to homelab hosts via MCP or SSH.');
+    connectCmd
+      .command('test')
+      .description('Test MCP/SSH connectivity to all configured hosts.')
+      .option('--host <hostname>', 'Test only this host')
+      .option('--json', 'Emit JSON output')
+      .action(async (cmdOpts: { host?: string; json?: boolean }) => {
+        handled = true;
+        let runtime: Awaited<ReturnType<typeof assembleRuntime>> | null = null;
+        try {
+          runtime = await assembleRuntime({ env });
+          exitCode = await runConnectTest({
+            ...runtime,
+            streams,
+            json: cmdOpts.json === true,
+            hostFilter: cmdOpts.host,
+          });
+        } catch (err) {
+          const e = err as Error & { exit?: number };
+          printError(e.message, streams);
+          exitCode = typeof e.exit === 'number' ? e.exit : EXIT_INTERNAL;
+        } finally {
+          if (runtime !== null) {
+            await runtime.shutdown().catch(() => undefined);
+          }
+        }
+      });
+    program.addCommand(connectCmd);
+  }
+
   const inventoryCmd = program
     .command('inventory')
     .description('Read or manage the discovered-platforms inventory.');
@@ -483,4 +554,12 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     if (e.stack) streams.stderr(e.stack + '\n');
     return EXIT_INTERNAL;
   }
+}
+
+// Execute when run directly as a CLI (CommonJS `require.main === module`).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+if (typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module) {
+  void runCli({ argv: process.argv.slice(2) }).then((code) => {
+    process.exit(code);
+  });
 }
