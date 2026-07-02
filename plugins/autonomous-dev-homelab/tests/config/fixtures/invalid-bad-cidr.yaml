@@ -1,0 +1,18 @@
+version: 1
+vault:
+  address: https://vault.pwatson.space:8200
+  auth_method: approle
+  approle:
+    role_id_env: VAULT_ROLE_ID
+    secret_id_env: VAULT_SECRET_ID
+hosts:
+  - hostname: gallifrey-lab-01
+    platform: docker-swarm-manager
+    role: manager
+    ssh_fallback:
+      host: gallifrey-lab-01
+      port: 70000
+      user: patrick
+      key_ref:
+        vault_path: kv/data/homelab/ssh
+        vault_field: gallifrey_key

@@ -1,0 +1,53 @@
+# homelab.config.yaml — autonomous-dev-homelab configuration template
+# Place this file at: ~/.autonomous-dev-homelab/homelab.config.yaml
+# Permissions: chmod 600 ~/.autonomous-dev-homelab/homelab.config.yaml
+#
+# SECURITY: Never put raw credentials here. Always use vault_path + vault_field.
+# See docs/runbooks/REQ-000055-homelab-operator.md §3 for details.
+
+version: 1
+
+vault:
+  address: https://vault.example.com:8200  # Replace with your Vault address
+  auth_method: approle
+  approle:
+    role_id_env: VAULT_ROLE_ID       # Name of env var holding the AppRole Role ID
+    secret_id_env: VAULT_SECRET_ID   # Name of env var holding the AppRole Secret ID
+
+hosts:
+  # Docker Swarm manager node
+  - hostname: swarm-manager-01
+    platform: docker-swarm-manager
+    role: manager
+    # mcp_endpoint: mcp://swarm-manager-01:5510  # Optional: MCP endpoint if available
+    ssh_fallback:
+      host: swarm-manager-01     # Hostname or IP
+      port: 22
+      user: admin
+      key_ref:
+        vault_path: kv/data/homelab/ssh  # KV v2 path
+        vault_field: manager_key          # Field name in the KV secret
+
+  # Docker Swarm worker node
+  - hostname: swarm-worker-01
+    platform: docker-swarm-worker
+    role: worker
+    ssh_fallback:
+      host: swarm-worker-01
+      port: 22
+      user: admin
+      key_ref:
+        vault_path: kv/data/homelab/ssh
+        vault_field: worker_key
+
+  # Unraid NAS
+  - hostname: tower.local
+    platform: unraid
+    role: nas
+    ssh_fallback:
+      host: tower.local
+      port: 22
+      user: root
+      key_ref:
+        vault_path: kv/data/homelab/ssh
+        vault_field: tower_key

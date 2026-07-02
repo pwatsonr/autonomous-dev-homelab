@@ -1,0 +1,19 @@
+{
+  "_note": "PENDING LIVE EXECUTION — run: homelab autofix propose <obs-id> && homelab autofix dry-run <prop-id>",
+  "proposal": {
+    "id": "prop-2026-07-01-PENDING",
+    "created_at": "PENDING",
+    "observation_id": "obs-PENDING",
+    "target_host": "gallifrey-lab-01",
+    "action_class": "container.restart",
+    "params": { "service": "portainer" },
+    "ladder_level": "L0",
+    "requires_typed_confirm": true,
+    "delay_hours": 24,
+    "notes": "dry-run only for REQ-000055"
+  },
+  "dry_run_result": {
+    "proposal_id": "prop-2026-07-01-PENDING",
+    "gate_outcome": "WOULD_DELAY_24H"
+  }
+}

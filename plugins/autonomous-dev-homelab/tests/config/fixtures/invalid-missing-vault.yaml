@@ -1,0 +1,12 @@
+version: 1
+hosts:
+  - hostname: gallifrey-lab-01
+    platform: docker-swarm-manager
+    role: manager
+    ssh_fallback:
+      host: gallifrey-lab-01
+      port: 22
+      user: patrick
+      key_ref:
+        vault_path: kv/data/homelab/ssh
+        vault_field: gallifrey_key

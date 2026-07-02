@@ -1,0 +1,12 @@
+# Evidence: Clean Build — REQ-000055
+# Captured: 2026-07-01
+# Command: npm run build
+
+> autonomous-dev-homelab@0.2.0 build
+> bash scripts/build.sh
+
+[build] Running TypeScript compiler...
+[build] Setting executable bit on CLI entrypoints...
+[build] Build complete. dist/cli/main.js and dist/cli/index.js are ready.
+
+Exit code: 0

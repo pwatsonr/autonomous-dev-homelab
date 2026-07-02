@@ -1,0 +1,12 @@
+# Evidence: Audit Log Excerpt — REQ-000055
+# Status: PENDING LIVE EXECUTION
+# Note: All credential values are hash-only (sha256:...). No secrets in log.
+#
+# To capture live:
+#   node dist/cli/main.js audit query --last 10 2>&1 | tee docs/evidence/REQ-000055/06-audit-excerpt.log
+#
+# Expected audit event shapes (secret refs hashed):
+#
+# {"type":"connect.test","host":"gallifrey-lab-01","transport":"ssh","transport_reason":"mcp-not-configured","outcome":"ok","latency_ms":87,"credential_ref_hash":"sha256:af12...","occurred_at":"2026-07-01T12:34:56.123Z"}
+# {"type":"connect.test","host":"gallifrey-lab-02","transport":"ssh","transport_reason":"mcp-not-configured","outcome":"ok","latency_ms":92,"credential_ref_hash":"sha256:af12...","occurred_at":"2026-07-01T12:34:56.234Z"}
+# {"type":"connect.test","host":"unraid.pwatson.space","transport":"ssh","transport_reason":"mcp-not-configured","outcome":"ok","latency_ms":110,"credential_ref_hash":"sha256:bb34...","occurred_at":"2026-07-01T12:34:56.345Z"}

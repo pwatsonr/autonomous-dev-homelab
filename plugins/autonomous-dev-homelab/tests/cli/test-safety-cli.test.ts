@@ -9,7 +9,11 @@
  */
 
 import { buildSafetyCommand, runSafetyCheck } from '../../src/cli/commands/safety';
-import { buildCancelActionCommand, runCancelAction } from '../../src/cli/commands/cancel-action';
+import {
+  buildCancelActionCommand,
+  runCancelAction,
+  type CancelAuditEvent,
+} from '../../src/cli/commands/cancel-action';
 import { buildMigrationsCommand, runMigrationsStatus } from '../../src/cli/commands/migrations';
 import type { Destructiveness } from '../../src/safety/destructiveness';
 import type { MigrationState } from '../../src/migration/types';
@@ -123,7 +127,7 @@ describe('safety check CLI', () => {
 describe('cancel-action CLI', () => {
   it('calls injected cancel + writes audit entry', async () => {
     const cancel = jest.fn(async () => undefined);
-    const audit = jest.fn(async () => undefined);
+    const audit = jest.fn<Promise<void>, [CancelAuditEvent]>(async () => undefined);
     const { captured, streams } = captureStreams();
     const handle = buildCancelActionCommand({ cancel, audit, streams });
     await handle.command.parseAsync(['act-1'], { from: 'user' });

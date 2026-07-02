@@ -1,0 +1,28 @@
+{
+  "_note": "PENDING LIVE EXECUTION — one observation per host role",
+  "_command": "homelab observe scan --json",
+  "swarm_manager_sample": {
+    "host": "gallifrey-lab-01",
+    "probe": "swarm-container-health",
+    "status": "healthy",
+    "services_healthy": ["portainer", "sonarr", "radarr", "sabnzbd", "authentik", "nginx-proxy-manager"],
+    "services_degraded": [],
+    "observed_at": "PENDING"
+  },
+  "swarm_worker_sample": {
+    "host": "gallifrey-lab-02",
+    "probe": "swarm-container-health",
+    "status": "healthy",
+    "services_healthy": [],
+    "services_degraded": [],
+    "observed_at": "PENDING"
+  },
+  "unraid_sample": {
+    "host": "unraid.pwatson.space",
+    "probe": "unraid-array-health",
+    "status": "healthy",
+    "array_size_tb": 80,
+    "drives_healthy": "PENDING",
+    "observed_at": "PENDING"
+  }
+}
