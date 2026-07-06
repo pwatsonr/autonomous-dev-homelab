@@ -1,10 +1,13 @@
 /**
  * Tests for src/observation/live-probes.ts.
  * Covers T009-1 through T009-4 from SPEC REQ-000055 §5.10.
+ * Also covers pool-injection (GAP 2 fix): probes receive real exec sources
+ * when a ConnectionPool is supplied.
  */
 
 import { buildLiveProbes } from '../../src/observation/live-probes';
 import type { HomelabConfig } from '../../src/config/types';
+import type { ConnectionPool } from '../../src/connection/pool';
 
 const THREE_HOST_CONFIG: HomelabConfig = {
   version: 1,
@@ -111,6 +114,60 @@ describe('buildLiveProbes', () => {
       // With no-op exec source, no crash_loop observations should be emitted
       // (empty stdout → no unhealthy services)
       // Unraid probes with empty stdout won't trigger degraded state either
+    }
+  });
+});
+
+describe('buildLiveProbes — pool injection (GAP 2)', () => {
+  /**
+   * Build a minimal ConnectionPool mock whose getConnection returns a
+   * connection stub that records exec calls.
+   */
+  function makePoolMock(execOutput: string): {
+    pool: ConnectionPool;
+    execCalls: Array<{ platformId: string; command: string }>;
+  } {
+    const execCalls: Array<{ platformId: string; command: string }> = [];
+    const pool = {
+      getConnection: jest.fn(async (platformId: string) => ({
+        exec: jest.fn(async (command: string) => {
+          execCalls.push({ platformId, command });
+          return { stdout: execOutput, stderr: '', exitCode: 0, durationMs: 1 };
+        }),
+      })),
+    } as unknown as ConnectionPool;
+    return { pool, execCalls };
+  }
+
+  it('passes exec calls through the pool connection for swarm probes', async () => {
+    const { pool, execCalls } = makePoolMock('');
+    const probes = buildLiveProbes(THREE_HOST_CONFIG, { pool });
+    expect(probes).toHaveLength(4);
+    // Run the swarm probe (index 0 = gallifrey-lab-01)
+    await probes[0]!.scan();
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0]!.platformId).toBe('gallifrey-lab-01');
+    expect(execCalls[0]!.command).toContain('docker service ls');
+  });
+
+  it('passes exec calls through the pool connection for unraid probes', async () => {
+    const { pool, execCalls } = makePoolMock('all pools are healthy');
+    const probes = buildLiveProbes(THREE_HOST_CONFIG, { pool });
+    // Index 2 = unraid-array, index 3 = unraid-pool
+    await probes[2]!.scan(); // mdcmd status
+    await probes[3]!.scan(); // zpool status -x
+    expect(execCalls).toHaveLength(2);
+    for (const call of execCalls) {
+      expect(call.platformId).toBe('unraid.pwatson.space');
+    }
+  });
+
+  it('without pool, probes use no-op exec source and pool is not called', async () => {
+    // Verifies that the no-pool path still works (backward compat).
+    const probes = buildLiveProbes(THREE_HOST_CONFIG);
+    for (const p of probes) {
+      const obs = await p.scan();
+      expect(Array.isArray(obs)).toBe(true);
     }
   });
 });
