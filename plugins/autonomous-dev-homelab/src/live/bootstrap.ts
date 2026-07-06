@@ -14,7 +14,9 @@
 
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as fs from 'node:fs/promises';
 import type { HomelabConfig } from '../config/types.js';
+import type { PlatformType } from '../discovery/inventory-types.js';
 import type { SecretResolver } from '../secrets/types.js';
 import { loadHomelabConfig } from '../config/loader.js';
 import { VaultSecretResolver } from '../secrets/vault-resolver.js';
@@ -50,6 +52,21 @@ export interface AssembleRuntimeOptions {
  * @throws VaultUnreachableError (exit 20) — Vault unreachable.
  * @throws VaultAuthError (exit 21) — Vault auth failed.
  */
+/** Map a config `platform` value to the inventory `PlatformType`. */
+function configPlatformToType(platform: string): PlatformType {
+  switch (platform) {
+    case 'docker-swarm-manager':
+    case 'docker-swarm-worker':
+      return 'docker-swarm';
+    case 'unraid':
+      return 'unraid';
+    default:
+      // Config schema restricts platform to the cases above; fall back to
+      // docker-swarm rather than throwing so an unknown value degrades to SSH.
+      return 'docker-swarm';
+  }
+}
+
 export async function assembleRuntime(opts?: AssembleRuntimeOptions): Promise<Runtime> {
   const env = opts?.env ?? process.env;
   const cwd = opts?.cwd ?? process.cwd();
@@ -79,6 +96,48 @@ export async function assembleRuntime(opts?: AssembleRuntimeOptions): Promise<Ru
     return createConnection(id, entry);
   });
 
+  // Seed the pool from the operator-declared config hosts. Each host's SSH
+  // private key is resolved from Vault and materialized to a 0600 temp file so
+  // the SSH transport (which shells out to `ssh -i`) can use it. This is what
+  // lets `connect`/`observe` operate on declared hosts without a prior
+  // `discover` run. Per-host failures are non-fatal: a host that can't resolve
+  // its key is simply left unseeded and will surface as a connect failure.
+  const keysDir = path.join(dataDir, '.keys');
+  await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
+  const tempKeyPaths: string[] = [];
+  const nowIso = new Date().toISOString();
+  for (const host of config.hosts) {
+    try {
+      const resolved = await resolver.resolve(host.ssh_fallback.key_ref);
+      const keyPath = path.join(keysDir, `${host.hostname}.key`);
+      await fs.writeFile(keyPath, resolved.value, { mode: 0o600 });
+      tempKeyPaths.push(keyPath);
+      const connection: Record<string, unknown> = {
+        ssh_user: host.ssh_fallback.user,
+        ssh_key_path: keyPath,
+      };
+      if (typeof host.mcp_endpoint === 'string' && host.mcp_endpoint.length > 0) {
+        connection['mcp_endpoint'] = host.mcp_endpoint;
+        connection['prefer'] = 'mcp';
+      } else {
+        connection['prefer'] = 'ssh';
+      }
+      preloaded.set(host.hostname, {
+        id: host.hostname,
+        type: configPlatformToType(host.platform),
+        host: host.ssh_fallback.host,
+        port: host.ssh_fallback.port,
+        ssh_host: host.ssh_fallback.host,
+        ssh_port: host.ssh_fallback.port,
+        discovered_at: nowIso,
+        last_seen: nowIso,
+        connection,
+      });
+    } catch {
+      // Leave this host unseeded; connect/observe will report it as failed.
+    }
+  }
+
   const auditLogPath = path.join(dataDir, 'audit.log');
   const keyStore = new AuditKeyStore({ keyPath: path.join(dataDir, '.audit-key') });
   const audit = new AuditWriter({ logPath: auditLogPath, keyStore });
@@ -106,6 +165,10 @@ export async function assembleRuntime(opts?: AssembleRuntimeOptions): Promise<Ru
     async shutdown(): Promise<void> {
       resolver.dispose();
       await pool.closeAll();
+      // Best-effort removal of materialized private-key temp files.
+      await Promise.all(
+        tempKeyPaths.map((p) => fs.rm(p, { force: true }).catch(() => undefined)),
+      );
     },
   };
 }
