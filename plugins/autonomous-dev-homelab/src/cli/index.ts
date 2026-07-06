@@ -32,6 +32,7 @@ import { buildAuditCommand } from './commands/audit.js';
 import { buildConsentCommand } from './commands/consent.js';
 import { buildCACommand } from './commands/ca.js';
 import { buildObserveCommand } from './commands/observe.js';
+import { buildLiveProbes } from '../observation/live-probes.js';
 import { buildSafetyCommand } from './commands/safety.js';
 import { buildCancelActionCommand } from './commands/cancel-action.js';
 import { buildMigrationsCommand } from './commands/migrations.js';
@@ -317,17 +318,35 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     program.addCommand(handle.command);
   }
 
-  // `observe` command group: scan + list + promote. Probe bootstrap (which
-  // platforms get which probes) is out of scope for SPEC-002-1-04 — the
-  // collector here is constructed with an empty probe array; tests
-  // exercise the command builder directly with mocked deps.
+  // `observe` command group: scan + list + promote.
+  //
+  // Probe bootstrap: load the operator's homelab config to build live probes
+  // from the configured hosts. Each probe receives a real exec source backed
+  // by the connection pool so commands run over the live MCP/SSH connection.
+  // If no config is present or Vault is unreachable, we fall back to an
+  // empty probe list — the CLI remains functional for `list` and `promote`.
   {
     const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+
+    // Attempt to assemble the live runtime (config + Vault + pool) so that
+    // probes are backed by real connections. This is best-effort: errors
+    // (missing config, Vault unreachable, etc.) fall through to empty probes.
+    let observeRuntime: Awaited<ReturnType<typeof assembleRuntime>> | null = null;
+    let liveProbes: import('../observation/types.js').Probe[] = [];
+    try {
+      observeRuntime = await assembleRuntime({ env });
+      liveProbes = buildLiveProbes(observeRuntime.config, { pool: observeRuntime.pool });
+    } catch {
+      // Config absent, Vault unreachable, or other bootstrap error —
+      // proceed with empty probe list. `list` and `promote` still work.
+      liveProbes = [];
+    }
+
     const store = new ObservationStore(dataDir);
     const dedup = new DedupCache();
     const promoter = new ObservationPromoter();
     const collector = new ObservationCollector({
-      probes: [],
+      probes: liveProbes,
       dedup,
       store,
       promoter,
