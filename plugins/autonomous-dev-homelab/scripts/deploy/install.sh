@@ -46,6 +46,11 @@ mkdir -p "$LOG_DIR"
 mkdir -p "$INSTALL_DIR"
 tar -xzf "$TARBALL" -C "$INSTALL_DIR" --strip-components=1
 
+# Install production Node.js dependencies (the tarball does not bundle node_modules).
+# Use --ignore-scripts to skip lifecycle hooks that may require a full dev environment.
+echo "[install] Installing production dependencies..."
+(cd "$INSTALL_DIR" && npm install --production --ignore-scripts --no-audit --no-fund 2>&1 | sed 's/^/[install:npm]  /')
+
 # Atomic symlink flip (idempotent)
 ln -sfn "$INSTALL_DIR" "$SYMLINK"
 

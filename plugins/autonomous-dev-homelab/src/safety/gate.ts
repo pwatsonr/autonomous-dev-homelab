@@ -98,16 +98,37 @@ async function passThroughReadOnly(
 }
 
 /**
- * Reversible + persistent-modifying flow placeholder. Wires to PLAN-002-1
- * approval-gate UI once finalized. Tests mock this function via Jest.
+ * Reversible + persistent-modifying approval flow.
+ *
+ * Requires the operator to confirm via typed-CONFIRM. No backup check is
+ * performed (that is reserved for `data-affecting` and above). Audit-logs
+ * `gate.allowed` on success and throws `ApprovalDeniedError` on rejection.
  */
 async function requestStandardApproval(
-  _action: Action,
-  _ctx: GateContext,
+  action: Action,
+  ctx: GateContext,
 ): Promise<ApprovalResult> {
-  throw new Error(
-    'NOT_IMPLEMENTED: requestStandardApproval — wired in PLAN-002-1 integration',
-  );
+  const confirmed = await typedConfirmModal({
+    message: `Confirm ${action.destructiveness} action: ${action.description}`,
+    ttl_seconds: ctx.config.typed_confirm_ttl_seconds ?? 60,
+  });
+  const ts = new Date().toISOString();
+  if (!confirmed) {
+    await ctx.audit({
+      type: 'gate.denied',
+      action_id: action.id,
+      reason: 'typed-CONFIRM rejected or timed out',
+      occurred_at: ts,
+    });
+    throw new ApprovalDeniedError(action.id, 'typed-CONFIRM rejected');
+  }
+  await ctx.audit({
+    type: 'gate.allowed',
+    action_id: action.id,
+    reason: `${action.destructiveness} approved via typed-CONFIRM`,
+    occurred_at: ts,
+  });
+  return { approved: true, actionId: action.id, approvedAt: ts, approvedBy: 'operator' };
 }
 
 async function requestDataAffectingApproval(

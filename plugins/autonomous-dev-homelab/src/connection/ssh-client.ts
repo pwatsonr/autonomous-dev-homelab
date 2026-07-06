@@ -102,13 +102,14 @@ export class SSHClient {
   private buildArgs(remoteCommand: string): string[] {
     if (!this.creds) throw new Error('buildArgs called without credentials');
     const c = this.creds;
-    const args = [
-      '-p',
-      String(c.port ?? 22),
-      '-i',
-      c.privateKeyPath,
-      '-o',
-      `CertificateFile=${c.certPath}`,
+    const args = ['-p', String(c.port ?? 22), '-i', c.privateKeyPath];
+    // Only pass CertificateFile when a signed cert is configured. Plain key
+    // auth (no SSH CA) leaves certPath empty; emitting `CertificateFile=` with
+    // no value makes ssh abort ("no argument after keyword certificatefile").
+    if (c.certPath !== undefined && c.certPath !== '') {
+      args.push('-o', `CertificateFile=${c.certPath}`);
+    }
+    args.push(
       '-o',
       'BatchMode=yes',
       '-o',
@@ -117,7 +118,7 @@ export class SSHClient {
       'PubkeyAuthentication=yes',
       '-o',
       'IdentitiesOnly=yes',
-    ];
+    );
     if (c.knownHostsPath !== undefined) {
       args.push('-o', `UserKnownHostsFile=${c.knownHostsPath}`, '-o', 'StrictHostKeyChecking=yes');
     } else {

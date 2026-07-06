@@ -43,9 +43,13 @@ export async function pickTransport(
   const endpoint = host.mcp_endpoint;
 
   try {
-    const timeoutPromise = new Promise<boolean>((_, reject) =>
-      setTimeout(() => reject(new Error('MCP probe timeout')), timeoutMs),
-    );
+    const timeoutPromise = new Promise<boolean>((_, reject) => {
+      // .unref() prevents this timer from keeping the Jest worker alive.
+      const t = setTimeout(() => reject(new Error('MCP probe timeout')), timeoutMs);
+      if (typeof t === 'object' && t !== null && typeof (t as NodeJS.Timeout).unref === 'function') {
+        (t as NodeJS.Timeout).unref();
+      }
+    });
     const probePromise = mcp.probe(endpoint, { timeoutMs });
     const result = await Promise.race([probePromise, timeoutPromise]);
 

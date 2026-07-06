@@ -103,18 +103,45 @@ describe('gateApproval — read-only pass-through', () => {
 });
 
 describe('gateApproval — standard flow (reversible/persistent-modifying)', () => {
-  it('reversible currently NOT_IMPLEMENTED (PLAN-002-1 wiring pending)', async () => {
-    const { ctx } = makeCtx();
-    await expect(
-      gateApproval(makeAction({ destructiveness: 'reversible' }), ctx),
-    ).rejects.toThrow(/NOT_IMPLEMENTED/);
+  it('reversible: typed-CONFIRM accepted → approved + gate.allowed audit', async () => {
+    (typedConfirmModal as jest.Mock).mockResolvedValue(true);
+    const { ctx, events } = makeCtx();
+    const action = makeAction({ destructiveness: 'reversible' });
+    const result = await gateApproval(action, ctx);
+    expect(result.approved).toBe(true);
+    if (result.approved) {
+      expect(result.approvedBy).toBe('operator');
+    }
+    expect(typedConfirmModal).toHaveBeenCalledTimes(1);
+    expect(verifyBackup).not.toHaveBeenCalled();
+    expect(events.find((e) => e.type === 'gate.allowed')).toBeDefined();
   });
 
-  it('persistent-modifying currently NOT_IMPLEMENTED', async () => {
-    const { ctx } = makeCtx();
-    await expect(
-      gateApproval(makeAction({ destructiveness: 'persistent-modifying' }), ctx),
-    ).rejects.toThrow(/NOT_IMPLEMENTED/);
+  it('reversible: typed-CONFIRM rejected → ApprovalDeniedError + gate.denied audit', async () => {
+    (typedConfirmModal as jest.Mock).mockResolvedValue(false);
+    const { ctx, events } = makeCtx();
+    const action = makeAction({ destructiveness: 'reversible' });
+    await expect(gateApproval(action, ctx)).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(events.find((e) => e.type === 'gate.denied')).toBeDefined();
+  });
+
+  it('persistent-modifying: typed-CONFIRM accepted → approved', async () => {
+    (typedConfirmModal as jest.Mock).mockResolvedValue(true);
+    const { ctx, events } = makeCtx();
+    const action = makeAction({ destructiveness: 'persistent-modifying' });
+    const result = await gateApproval(action, ctx);
+    expect(result.approved).toBe(true);
+    expect(typedConfirmModal).toHaveBeenCalledTimes(1);
+    expect(verifyBackup).not.toHaveBeenCalled();
+    expect(events.find((e) => e.type === 'gate.allowed')).toBeDefined();
+  });
+
+  it('persistent-modifying: typed-CONFIRM rejected → ApprovalDeniedError', async () => {
+    (typedConfirmModal as jest.Mock).mockResolvedValue(false);
+    const { ctx, events } = makeCtx();
+    const action = makeAction({ destructiveness: 'persistent-modifying' });
+    await expect(gateApproval(action, ctx)).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(events.find((e) => e.type === 'gate.denied')).toBeDefined();
   });
 });
 
