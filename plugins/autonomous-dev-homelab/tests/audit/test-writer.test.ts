@@ -250,6 +250,9 @@ describe('AuditWriter — concurrency', () => {
   });
 
   it('1000 concurrent appends produce contiguous seqs and a verifiable chain', async () => {
+    // NOTE: timeout is generous (30s) because when the full suite runs in
+    // parallel the macOS fsync queue can be saturated; 1000 chained appends
+    // have completed in ~900ms alone but take up to ~8s under full-suite load.
     const w = makeWriter(ctx);
     const N = 1000;
     const results = await Promise.all(
@@ -276,7 +279,7 @@ describe('AuditWriter — concurrency', () => {
       expect(e.hmac).toBe(expected);
       prev = e.hmac;
     }
-  });
+  }, 30_000);
 
   it('pendingWrites reports a non-zero queue depth during a burst', async () => {
     const w = makeWriter(ctx);

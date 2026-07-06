@@ -246,12 +246,17 @@ export class VaultSecretResolver implements SecretResolver {
     const controller = new AbortController();
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      // .unref() ensures this timer does not prevent the process (or Jest worker)
+      // from exiting if no other work is pending.
+      const t = setTimeout(() => {
         controller.abort();
         reject(
           Object.assign(new Error('Vault request timed out'), { name: 'AbortError' }),
         );
       }, this.requestTimeoutMs);
+      if (typeof t === 'object' && t !== null && typeof (t as NodeJS.Timeout).unref === 'function') {
+        (t as NodeJS.Timeout).unref();
+      }
     });
 
     try {

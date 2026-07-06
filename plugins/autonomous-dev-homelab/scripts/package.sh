@@ -25,12 +25,28 @@ TARBALL="dist/autonomous-dev-homelab-${VERSION}.tgz"
 echo "[package] Creating tarball: $TARBALL"
 mkdir -p dist
 
-# Create tarball with plugin contents
-tar -czf "$TARBALL" \
-  --transform 's|^|autonomous-dev-homelab/|' \
-  dist/ \
-  package.json \
-  README.md \
-  2>/dev/null
+# Stage files into a named subdirectory so the tarball has the correct
+# top-level prefix (autonomous-dev-homelab/). This avoids relying on
+# --transform (GNU tar only) and works with both BSD tar (macOS) and
+# GNU tar (Linux CI).
+STAGE_DIR="$(mktemp -d)"
+STAGE_PKG="${STAGE_DIR}/autonomous-dev-homelab"
+mkdir -p "$STAGE_PKG"
+
+cp -r dist/ "$STAGE_PKG/dist"
+cp package.json "$STAGE_PKG/package.json"
+[ -f README.md ] && cp README.md "$STAGE_PKG/README.md" || true
+
+# Include JSON schemas required at runtime (inventory-v1.json etc).
+# The compiled JS resolves them as '../../schemas/<name>.json' relative to
+# dist/<module>/, which maps to <install-root>/schemas/<name>.json.
+if [ -d schemas ]; then
+  cp -r schemas/ "$STAGE_PKG/schemas"
+fi
+
+tar -czf "$TARBALL" -C "$STAGE_DIR" autonomous-dev-homelab
+
+# Clean up staging area
+rm -rf "$STAGE_DIR"
 
 echo "[package] Package created: $TARBALL"

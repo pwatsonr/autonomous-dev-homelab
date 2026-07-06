@@ -19,7 +19,20 @@ PATTERNS=(
 FOUND=0
 
 for pattern in "${PATTERNS[@]}"; do
-  if grep -rE "$pattern" "$TARGET" --include="*.js" --include="*.ts" --include="*.json" --include="*.yaml" --include="*.yml" --include="*.env" 2>/dev/null | grep -v "node_modules" | grep -v ".test." | grep -v "# example" | grep -v "# placeholder" | grep -q .; then
+  # Exclusions:
+  #   node_modules  — third-party deps
+  #   .test.        — test fixtures / snapshots
+  #   # example / # placeholder — doc comments
+  #   redactor      — the redactor module itself carries these patterns as
+  #                   regex literals used to *strip* secrets; they are not
+  #                   credential values. (redactor.ts / redactor.js)
+  if grep -rE "$pattern" "$TARGET" --include="*.js" --include="*.ts" --include="*.json" --include="*.yaml" --include="*.yml" --include="*.env" 2>/dev/null \
+    | grep -v "node_modules" \
+    | grep -v ".test." \
+    | grep -v "# example" \
+    | grep -v "# placeholder" \
+    | grep -v "redactor" \
+    | grep -q .; then
     echo "[secret-scan] FAIL: Pattern '$pattern' matched in $TARGET"
     FOUND=1
   fi
