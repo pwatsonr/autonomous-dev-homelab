@@ -140,14 +140,20 @@ function classifyRemediation(obs: Observation): {
   destructiveness: Destructiveness;
   actionClass: string;
   command: string;
+  service: string;
 } | null {
-  if (obs.pattern === 'crash_loop' && obs.platform.startsWith('docker-swarm')) {
-    const serviceName = obs.resource;
+  // A crash-looping Docker Swarm service is reported with resource
+  // "service/<name>" (the platform field holds the host id, not the platform
+  // type, so we key off the resource prefix). Remediation is a forced service
+  // restart, which is reversible (no data/config change).
+  if (obs.pattern === 'crash_loop' && obs.resource.startsWith('service/')) {
+    const serviceName = obs.resource.slice('service/'.length);
     const command = `docker service update --force ${serviceName}`;
     return {
       destructiveness: 'reversible',
       actionClass: 'container.restart',
       command,
+      service: serviceName,
     };
   }
   return null;
@@ -249,7 +255,7 @@ export async function runAutofixPropose(
       target_host: obs.platform,
       action_class: classification.actionClass,
       params: {
-        service: obs.resource,
+        service: classification.service,
         command: classification.command,
       },
       destructiveness: classification.destructiveness,

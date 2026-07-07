@@ -121,11 +121,11 @@ function makeCrashLoopObs(overrides: Partial<Observation> = {}): Observation {
     id: 'obs-crash-001',
     platform: 'docker-swarm-01',
     pattern: 'crash_loop',
-    resource: 'my-web-service',
+    resource: 'service/my-web-service',
     severity: 'P0',
     discovered_at: new Date().toISOString(),
     details: { restart_count: 10 },
-    dedup_key: 'docker-swarm-01:crash_loop:my-web-service',
+    dedup_key: 'docker-swarm-01:crash_loop:service/my-web-service',
     ...overrides,
   };
 }
