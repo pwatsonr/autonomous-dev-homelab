@@ -448,9 +448,28 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     const logPath = path.join(dataDir, 'audit.log');
     const keyStore = new AuditKeyStore({ keyPath: path.join(dataDir, '.audit-key') });
     const auditWriter = new AuditWriter({ logPath, keyStore });
-    const autofixHandle = buildAutofixCommand({ audit: auditWriter, streams, dataDir });
+    // `apply` needs a live connection; assemble the runtime lazily on first
+    // use (propose/dry-run never trigger it) and shut it down after the
+    // command so materialized key temp files are cleaned.
+    let autofixRuntime: Awaited<ReturnType<typeof assembleRuntime>> | null = null;
+    const autofixGetConnection = async (host: string): Promise<import('../connection/base.js').Connection> => {
+      if (autofixRuntime === null) autofixRuntime = await assembleRuntime({ env });
+      return autofixRuntime.pool.getConnection(host);
+    };
+    const autofixHandle = buildAutofixCommand({
+      audit: auditWriter,
+      streams,
+      dataDir,
+      getConnection: autofixGetConnection,
+    });
     autofixHandle.command.hook('preAction', () => { handled = true; });
-    autofixHandle.command.hook('postAction', () => { exitCode = autofixHandle.lastExitCode(); });
+    autofixHandle.command.hook('postAction', async () => {
+      exitCode = autofixHandle.lastExitCode();
+      if (autofixRuntime !== null) {
+        await autofixRuntime.shutdown().catch(() => undefined);
+        autofixRuntime = null;
+      }
+    });
     program.addCommand(autofixHandle.command);
   }
 

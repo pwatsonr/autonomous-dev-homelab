@@ -97,6 +97,18 @@ export const PLATFORM_FINGERPRINTS: Fingerprint[] = [
     notes:
       'TrueNAS REST API v2: GET /api/v2.0/system/info returns hardware/serial info. Docs: https://www.truenas.com/docs/api/',
   },
+  {
+    platformType: 'portainer',
+    probe: { protocol: 'https', port: 9443, path: '/api/status' },
+    expectedResponse: {
+      kind: 'jsonPath',
+      path: '$.InstanceID',
+      exists: true,
+      confidence: 0.97,
+    },
+    notes:
+      'Portainer CE/EE management UI: GET /api/status returns { Version, InstanceID, ... } over HTTPS (self-signed cert common in homelabs). This is the reliable fingerprint for a Portainer instance managing a Docker Swarm. Port 9443 is the default HTTPS port for Portainer CE v2.x+. Docs: https://docs.portainer.io/api/access',
+  },
 ];
 
 /**

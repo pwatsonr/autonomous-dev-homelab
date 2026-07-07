@@ -261,6 +261,104 @@ describe('UnraidHomelabBackend', () => {
         backend.deploy(artifact, 'prod', { ...baseParams }),
       ).rejects.toMatchObject({ code: 'DEPLOY_FAILED' });
     });
+
+    it('triggers rollback automatically when pollForRunning fails and previous config exists', async () => {
+      // Build phase captures previous config. Deploy phase: new container fails
+      // to reach running → rollback should restore the previous config.
+      const previousConfig = { image: 'nginx:1.24', name: 'test-app' };
+      // inspectQueue: first call in build (inspect existing) returns config,
+      // second call in deploy (inspect existing before stop) returns running:true,
+      // third call in deploy (pollForRunning) returns running:false → triggers rollback,
+      // fourth call (rollback pollForRunning) returns running:true.
+      const client = new MockUnraidEmhttpClient({
+        pullStatus: {
+          image: 'nginx:latest',
+          digest: 'sha256:deadbeef',
+          sizeBytes: 1024,
+          status: 'complete',
+        },
+        inspectByName: new Map([
+          ['test-app', { name: 'test-app', state: { running: true }, config: previousConfig }],
+        ]),
+      });
+      let nowVal = 1700000000000;
+      // Use a seeded queue so we can control the poll loop responses:
+      // build's inspect → existing (has config)
+      // deploy's existing inspect → running:true (so stop is called)
+      // deploy's pollForRunning → running:false then deadline exceeded
+      // rollback's pollForRunning → running:true
+      client.setInspectQueue([
+        { name: 'test-app', state: { running: true }, config: previousConfig }, // build: inspectContainer
+        { name: 'test-app', state: { running: true } },                         // deploy: existing check
+        { name: 'test-app', state: { running: false } },                        // deploy: pollForRunning #1 (then sleep → deadline)
+        { name: 'test-app', state: { running: true } },                         // rollback: pollForRunning #1
+      ]);
+      const backend = new UnraidHomelabBackend({
+        getClient: async () => asEmhttpClient(client),
+        sleep: async () => {
+          // Only advance time on the pollForRunning sleep (deploy phase).
+          nowVal += 65_000;
+        },
+        now: () => nowVal,
+        generateId: () => 'unraid-rollback-auto',
+      });
+      const artifact = await backend.build(mkCtx());
+      // Confirm previous config was captured in artifact.
+      expect(artifact.metadata['previous_container_config']).toEqual(previousConfig);
+      client.recordedCalls.length = 0;
+      let thrownError: unknown;
+      try {
+        await backend.deploy(artifact, 'prod', { ...baseParams });
+      } catch (e) {
+        thrownError = e;
+      }
+      expect(thrownError).toMatchObject({ code: 'DEPLOY_FAILED' });
+      // Rollback should have been attempted (stopContainer called twice: once in
+      // deploy to stop old, once in rollback; removeContainer + addContainer in rollback).
+      const ops = client.recordedCalls.map((c) => c.op);
+      expect(ops).toContain('removeContainer');
+      const addCalls = client.recordedCalls.filter((c) => c.op === 'addContainer');
+      // One addContainer for the new deploy, one for restoring previous config.
+      expect(addCalls.length).toBeGreaterThanOrEqual(2);
+      // Verify rollback_attempted is surfaced in the error.
+      expect((thrownError as { details?: Record<string, unknown> }).details?.['rollback_attempted']).toBe(true);
+    });
+
+    it('does NOT trigger rollback on deploy failure when no previous config', async () => {
+      // No existing container → previous_container_config is null → rollback must not run.
+      const sickClient = new MockUnraidEmhttpClient({
+        pullStatus: {
+          image: 'nginx:latest',
+          digest: 'sha256:deadbeef',
+          sizeBytes: 1024,
+          status: 'complete',
+        },
+        // null → no existing container → no previous config captured in build
+        inspectByName: new Map([['test-app', null]]),
+      });
+      let nowVal = 1700000000000;
+      // Override inspectQueue: build's inspect→null, deploy's existing→null,
+      // pollForRunning returns running:false then deadline exceeded.
+      sickClient.setInspectQueue([
+        null,                                                            // build: inspectContainer → no existing
+        null,                                                            // deploy: existing check → no container to stop
+        { name: 'test-app', state: { running: false } },                // deploy: pollForRunning → not running
+      ]);
+      const backend = new UnraidHomelabBackend({
+        getClient: async () => asEmhttpClient(sickClient),
+        sleep: async () => { nowVal += 65_000; },
+        now: () => nowVal,
+        generateId: () => 'unraid-no-rollback',
+      });
+      const artifact = await backend.build(mkCtx());
+      expect(artifact.metadata['previous_container_config']).toBeNull();
+      sickClient.recordedCalls.length = 0;
+      await expect(
+        backend.deploy(artifact, 'prod', { ...baseParams }),
+      ).rejects.toMatchObject({ code: 'DEPLOY_FAILED' });
+      const rollbackOps = sickClient.recordedCalls.filter((c) => c.op === 'removeContainer');
+      expect(rollbackOps).toHaveLength(0);
+    });
   });
 
   describe('healthCheck', () => {
@@ -336,6 +434,40 @@ describe('UnraidHomelabBackend', () => {
       const result = await backend.rollback(record);
       expect(result.success).toBe(true);
       expect(result.restoredArtifactId).toBe('docker://nginx:1.24');
+    });
+
+    it('restores the EXACT previous config to addContainer on rollback', async () => {
+      // Verify the config passed to addContainer during rollback matches the
+      // captured previous config, not the new deploy payload.
+      const previousConfig = { image: 'nginx:1.24', name: 'test-app', network_mode: 'bridge' };
+      const { backend, client } = makeBackendAndClient({
+        inspect: {
+          name: 'test-app',
+          state: { running: true },
+          config: previousConfig,
+        },
+      });
+      const artifact = await backend.build(mkCtx());
+      const record = await backend.deploy(artifact, 'prod', { ...baseParams });
+      client.recordedCalls.length = 0;
+      await backend.rollback(record);
+      const addCall = client.recordedCalls.find((c) => c.op === 'addContainer');
+      expect(addCall).toBeDefined();
+      expect(addCall?.args[0]).toEqual(previousConfig);
+    });
+
+    it('rollback with no previous config is a safe no-op (no errors thrown, clear status)', async () => {
+      // Scenario: first-ever deploy → no previous config. rollback() must return
+      // a clean failure result, not throw or crash.
+      const { backend } = makeBackendAndClient();
+      const artifact = await backend.build(mkCtx());
+      const record = await backend.deploy(artifact, 'prod', { ...baseParams });
+      expect(record.payload.details['previous_container_config']).toBeNull();
+      // Should resolve (not reject).
+      const result = await backend.rollback(record);
+      expect(result.success).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toMatch(/no previous/i);
     });
   });
 });

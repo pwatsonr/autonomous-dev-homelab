@@ -216,6 +216,79 @@ describe('DockerSwarmHomelabBackend', () => {
         backend.deploy(artifact, 'prod', { ...baseParams }),
       ).rejects.toMatchObject({ code: 'DEPLOY_FAILED' });
     });
+
+    it('triggers rollback automatically on deploy failure when previous spec exists', async () => {
+      // Service exists (inspect succeeds) so previous_service_spec is captured,
+      // then stack deploy fails — rollback should be attempted.
+      const prevSpec = JSON.stringify([{ Spec: { Mode: { Replicated: { Replicas: 1 } } } }]);
+      const conn = mockDockerSwarmConnection({
+        patterns: [
+          {
+            // The state-poll command includes --format; match it first so it
+            // returns 'completed' rather than the JSON inspect result.
+            match: '--format',
+            result: { stdout: 'completed\n', stderr: '', exitCode: 0 },
+          },
+          {
+            match: 'docker service inspect',
+            result: { stdout: prevSpec, stderr: '', exitCode: 0 },
+          },
+          {
+            match: 'docker stack deploy',
+            result: { stdout: '', stderr: 'OOM: out of memory', exitCode: 1 },
+          },
+          {
+            match: 'docker service rollback',
+            result: { stdout: '', stderr: '', exitCode: 0 },
+          },
+        ],
+        fallback: { stdout: '', stderr: '', exitCode: 0 },
+      });
+      const backend = makeBackend(conn);
+      const artifact = await backend.build(mkCtx());
+      conn.recordedCalls.length = 0;
+      let thrownError: unknown;
+      try {
+        await backend.deploy(artifact, 'prod', { ...baseParams });
+      } catch (e) {
+        thrownError = e;
+      }
+      expect(thrownError).toMatchObject({ code: 'DEPLOY_FAILED' });
+      // Rollback should have been attempted.
+      const ops = conn.recordedCalls
+        .filter((c) => c.op === 'exec')
+        .map((c) => c.args[0] as string);
+      expect(ops.some((cmd) => cmd.startsWith('docker service rollback'))).toBe(true);
+      // Error details should reflect rollback was attempted.
+      expect((thrownError as { details?: Record<string, unknown> }).details?.['rollback_attempted']).toBe(true);
+    });
+
+    it('does NOT trigger rollback on deploy failure when no previous spec', async () => {
+      // No previous service (inspect fails) → rollback must not be called.
+      const conn = mockDockerSwarmConnection({
+        patterns: [
+          {
+            match: 'docker service inspect',
+            result: { stdout: '', stderr: 'no such service', exitCode: 1 },
+          },
+          {
+            match: 'docker stack deploy',
+            result: { stdout: '', stderr: 'image not found', exitCode: 1 },
+          },
+        ],
+        fallback: { stdout: '', stderr: '', exitCode: 0 },
+      });
+      const backend = makeBackend(conn);
+      const artifact = await backend.build(mkCtx());
+      conn.recordedCalls.length = 0;
+      await expect(backend.deploy(artifact, 'prod', { ...baseParams })).rejects.toMatchObject({
+        code: 'DEPLOY_FAILED',
+      });
+      const rollbackCalled = conn.recordedCalls.some(
+        (c) => c.op === 'exec' && (c.args[0] as string).startsWith('docker service rollback'),
+      );
+      expect(rollbackCalled).toBe(false);
+    });
   });
 
   describe('healthCheck', () => {
@@ -364,6 +437,25 @@ describe('DockerSwarmHomelabBackend', () => {
       const result = await backend.rollback(record);
       expect(result.success).toBe(true);
       expect(result.restoredArtifactId).toContain('swarm://');
+    });
+
+    it('rollback with no captured previous spec is a safe no-op (does not call docker service rollback)', async () => {
+      // Deploy with no existing service → previous_service_spec is null.
+      const conn = mockDockerSwarmConnection(happyExecMap({ hasPrevious: false }));
+      const backend = makeBackend(conn);
+      const artifact = await backend.build(mkCtx());
+      const record = await backend.deploy(artifact, 'prod', { ...baseParams });
+      expect(record.payload.details['previous_service_spec']).toBeNull();
+      conn.recordedCalls.length = 0;
+      const result = await backend.rollback(record);
+      // No-op: returns failure status, no docker rollback command issued.
+      expect(result.success).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(
+        conn.recordedCalls.some(
+          (c) => c.op === 'exec' && (c.args[0] as string).startsWith('docker service rollback'),
+        ),
+      ).toBe(false);
     });
   });
 });

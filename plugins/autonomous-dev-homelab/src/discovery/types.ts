@@ -12,6 +12,7 @@ export type PlatformType =
   | 'docker'
   | 'kubernetes'
   | 'docker-swarm'
+  | 'portainer'
   | 'unifi'
   | 'truenas';
 
