@@ -54,6 +54,7 @@ function fakeHttpClient(
 const PROXMOX_FP = PLATFORM_FINGERPRINTS.find((fp) => fp.platformType === 'proxmox-ve')!;
 const DOCKER_FP = PLATFORM_FINGERPRINTS.find((fp) => fp.platformType === 'docker')!;
 const K8S_FP = PLATFORM_FINGERPRINTS.find((fp) => fp.platformType === 'kubernetes')!;
+const PORTAINER_FP = PLATFORM_FINGERPRINTS.find((fp) => fp.platformType === 'portainer')!;
 
 function consentFor(ports: number[], scanTypes: ('http_probe' | 'ssh_probe' | 'tcp_connect')[]): Consent {
   return {
@@ -240,5 +241,74 @@ describe('PlatformProber', () => {
     const matches = await prober.scan('127.0.0.1/32', consentFor([443], ['http_probe']));
     expect(matches).toEqual([]);
     expect(fake.calls).toHaveLength(0);
+  });
+
+  // --- Portainer fingerprint tests (GitHub issue #14) ---
+
+  test('Portainer fingerprint matches real /api/status body and produces MatchedPlatform', async () => {
+    // Verified real-world response body from the live homelab.
+    const portainerBody = '{"Version":"2.39.3","InstanceID":"059c0f72-4d3b-4e2f-9c1a-8b7e5f6a2d1c"}';
+    const fake = fakeHttpClient(async (url) => {
+      if (url.includes(':9443/api/status')) {
+        return { statusCode: 200, body: portainerBody, headers: {} };
+      }
+      return { statusCode: 404, body: '', headers: {} };
+    });
+    const prober = new PlatformProber({
+      catalog: [PORTAINER_FP],
+      httpClient: fake.client,
+    });
+    const matches = await prober.scan('192.168.1.50/32', consentFor([9443], ['http_probe']));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.platformType).toBe('portainer');
+    expect(matches[0]!.port).toBe(9443);
+    expect(matches[0]!.protocol).toBe('https');
+    expect(matches[0]!.confidence).toBe(0.97);
+    expect(matches[0]!.ip).toBe('192.168.1.50');
+  });
+
+  test('Portainer probe passes allowSelfSigned: true (self-signed cert common in homelabs)', async () => {
+    const fake = fakeHttpClient(async () => ({
+      statusCode: 200,
+      body: '{"Version":"2.39.3","InstanceID":"059c0f72-4d3b-4e2f-9c1a-8b7e5f6a2d1c"}',
+      headers: {},
+    }));
+    const prober = new PlatformProber({
+      catalog: [PORTAINER_FP],
+      httpClient: fake.client,
+    });
+    await prober.scan('127.0.0.1/32', consentFor([9443], ['http_probe']));
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]!.opts.allowSelfSigned).toBe(true);
+  });
+
+  test('Portainer fingerprint does not match a 404 response', async () => {
+    const fake = fakeHttpClient(async () => ({
+      statusCode: 404,
+      body: '',
+      headers: {},
+    }));
+    const prober = new PlatformProber({
+      catalog: [PORTAINER_FP],
+      httpClient: fake.client,
+    });
+    const matches = await prober.scan('127.0.0.1/32', consentFor([9443], ['http_probe']));
+    expect(matches).toEqual([]);
+  });
+
+  test('Portainer fingerprint does not match a non-Portainer JSON body (no InstanceID)', async () => {
+    // A Docker Engine /info response does not contain InstanceID at the root.
+    const dockerInfoBody = '{"ServerVersion":"24.0.5","Swarm":{"NodeID":"abc123"}}';
+    const fake = fakeHttpClient(async () => ({
+      statusCode: 200,
+      body: dockerInfoBody,
+      headers: {},
+    }));
+    const prober = new PlatformProber({
+      catalog: [PORTAINER_FP],
+      httpClient: fake.client,
+    });
+    const matches = await prober.scan('127.0.0.1/32', consentFor([9443], ['http_probe']));
+    expect(matches).toEqual([]);
   });
 });
