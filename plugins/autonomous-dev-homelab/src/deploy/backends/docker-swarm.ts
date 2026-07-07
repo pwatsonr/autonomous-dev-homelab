@@ -124,9 +124,23 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
     const deployCmd = `docker stack deploy --compose-file ${composePath} --with-registry-auth ${stackName}`;
     const deployResult = await conn.exec(deployCmd);
     if (deployResult.exitCode !== 0) {
+      const deployMsg = (deployResult.stderr || deployResult.stdout).slice(0, 500);
+      // Attempt automatic rollback when a previous service spec was captured.
+      if (previousServiceSpec !== null && previousServiceSpec !== undefined) {
+        const rollbackResult = await this.attemptRollback(conn, stackName, serviceName);
+        throw new DeployError({
+          code: 'DEPLOY_FAILED',
+          message: deployMsg,
+          details: {
+            rollback_attempted: true,
+            rollback_success: rollbackResult.success,
+            rollback_errors: rollbackResult.errors,
+          },
+        });
+      }
       throw new DeployError({
         code: 'DEPLOY_FAILED',
-        message: (deployResult.stderr || deployResult.stdout).slice(0, 500),
+        message: deployMsg,
       });
     }
 
@@ -200,6 +214,39 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
     };
   }
 
+  /**
+   * Internal rollback helper used when a deploy failure occurs mid-flight and
+   * a connection is already established. Avoids re-calling `getConnection`.
+   */
+  private async attemptRollback(
+    conn: Awaited<ReturnType<SwarmBackendDeps['getConnection']>>,
+    stackName: string,
+    serviceName: string,
+  ): Promise<RollbackResult> {
+    const errors: string[] = [];
+    const rollbackCmd = `docker service rollback ${stackName}_${serviceName}`;
+    const rollbackResult = await conn.exec(rollbackCmd);
+    if (rollbackResult.exitCode !== 0) {
+      errors.push((rollbackResult.stderr || rollbackResult.stdout).slice(0, 200));
+      return { success: false, errors };
+    }
+    const deadline = this.deps.now() + 90_000;
+    const stateCmd = `docker service inspect ${stackName}_${serviceName} --format '{{.UpdateStatus.State}}'`;
+    while (this.deps.now() < deadline) {
+      const stateResult = await conn.exec(stateCmd);
+      if (stateResult.exitCode === 0 && stateResult.stdout.trim().toLowerCase() === 'completed') {
+        return {
+          success: true,
+          restoredArtifactId: `docker-swarm://${stackName}/${serviceName}@previous`,
+          errors,
+        };
+      }
+      await this.deps.sleep(2000);
+    }
+    errors.push('rollback did not complete within 90s');
+    return { success: false, errors };
+  }
+
   async rollback(record: DeploymentRecord): Promise<RollbackResult> {
     const details = record.payload.details as {
       manager_id: string;
@@ -211,29 +258,15 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
       return { success: false, errors: ['no previous service spec to roll back to'] };
     }
     const conn = await this.deps.getConnection(details.manager_id);
-    const errors: string[] = [];
-    const rollbackCmd = `docker service rollback ${details.stack_name}_${details.service_name}`;
-    const rollbackResult = await conn.exec(rollbackCmd);
-    if (rollbackResult.exitCode !== 0) {
-      errors.push((rollbackResult.stderr || rollbackResult.stdout).slice(0, 200));
-      return { success: false, errors };
+    const result = await this.attemptRollback(conn, details.stack_name, details.service_name);
+    // Promote the restoredArtifactId to include the manager_id for external callers.
+    if (result.success) {
+      return {
+        ...result,
+        restoredArtifactId: `docker-swarm://${details.manager_id}/${details.stack_name}/${details.service_name}@previous`,
+      };
     }
-    // Poll UpdateStatus.State until 'completed' (90s timeout).
-    const deadline = this.deps.now() + 90_000;
-    const stateCmd = `docker service inspect ${details.stack_name}_${details.service_name} --format '{{.UpdateStatus.State}}'`;
-    while (this.deps.now() < deadline) {
-      const stateResult = await conn.exec(stateCmd);
-      if (stateResult.exitCode === 0 && stateResult.stdout.trim().toLowerCase() === 'completed') {
-        return {
-          success: true,
-          restoredArtifactId: `docker-swarm://${details.manager_id}/${details.stack_name}/${details.service_name}@previous`,
-          errors,
-        };
-      }
-      await this.deps.sleep(2000);
-    }
-    errors.push('rollback did not complete within 90s');
-    return { success: false, errors };
+    return result;
   }
 }
 
