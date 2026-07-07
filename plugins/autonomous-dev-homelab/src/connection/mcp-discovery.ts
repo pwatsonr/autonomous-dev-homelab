@@ -179,6 +179,7 @@ export class MCPDiscovery {
       | 'docker'
       | 'kubernetes'
       | 'docker-swarm'
+      | 'portainer'
       | 'unifi'
       | 'truenas',
   ): HomelabPlatformId | null {
@@ -191,6 +192,9 @@ export class MCPDiscovery {
         return 'docker';
       case 'docker-swarm':
         // No mcp-server-docker-swarm; closest peer is mcp-server-docker.
+        return 'docker';
+      case 'portainer':
+        // Portainer manages Docker/Swarm; closest MCP peer is mcp-server-docker.
         return 'docker';
       case 'unraid':
         return 'unraid';

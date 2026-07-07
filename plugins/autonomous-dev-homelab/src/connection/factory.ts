@@ -79,6 +79,10 @@ export const createConnection: ConnectionFactory = (platformId, entry, deps = {}
     case 'docker-swarm':
       // Swarm uses the same Docker MCP server / SSH path.
       return new DockerConnection(platformId, mcpOrSshOpts(entry, deps));
+    case 'portainer':
+      // Portainer is a management layer over Docker/Swarm; SSH/MCP access
+      // goes to the underlying Docker host, so DockerConnection is correct.
+      return new DockerConnection(platformId, mcpOrSshOpts(entry, deps));
     case 'unifi':
       return new UnifiConnection(platformId, {
         hostname: entry.ssh_host ?? entry.host,

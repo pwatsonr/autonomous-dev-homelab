@@ -52,11 +52,12 @@ const POSITIVES: Record<string, string> = {
   'docker-swarm': '{"Swarm":{"NodeID":"abc123"}}',
   unifi: '<html>UniFi Network — Sign in</html>',
   truenas: '{"system_serial":"AB-CDEF-1234"}',
+  portainer: '{"Version":"2.39.3","InstanceID":"059c0f72-4d3b-4e2f-9c1a-8b7e5f6a2d1c"}',
 };
 
 describe('PLATFORM_FINGERPRINTS catalog', () => {
-  test('catalog contains 7 entries with confidence in [0.85, 0.99]', () => {
-    expect(PLATFORM_FINGERPRINTS).toHaveLength(7);
+  test('catalog contains 8 entries with confidence in [0.85, 0.99]', () => {
+    expect(PLATFORM_FINGERPRINTS).toHaveLength(8);
     for (const fp of PLATFORM_FINGERPRINTS) {
       expect(fp.expectedResponse.confidence).toBeGreaterThanOrEqual(0.85);
       expect(fp.expectedResponse.confidence).toBeLessThanOrEqual(0.99);
