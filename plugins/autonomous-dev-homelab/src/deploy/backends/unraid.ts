@@ -208,6 +208,11 @@ export class UnraidHomelabBackend implements DeploymentBackend {
       }
     }
 
+    // Capture the previous config before any destructive operation.
+    const previousConfig =
+      (artifact.metadata['previous_container_config'] as Record<string, unknown> | null | undefined) ??
+      null;
+
     // STOP the existing container BEFORE adding the new one.
     const existing = await client.inspectContainer(containerName);
     if (existing !== null) {
@@ -222,13 +227,28 @@ export class UnraidHomelabBackend implements DeploymentBackend {
       volumes: storageMounts,
       env: (params['env'] as Record<string, string> | undefined) ?? {},
     };
-    await client.addContainer(payload);
-    await client.startContainer(containerName);
-    await this.pollForRunning(client, containerName, 60_000);
+    try {
+      await client.addContainer(payload);
+      await client.startContainer(containerName);
+      await this.pollForRunning(client, containerName, 60_000);
+    } catch (err) {
+      // The new container failed to start. If a previous config was captured,
+      // attempt to restore it so the host is not left with no running service.
+      if (previousConfig !== null) {
+        const rollbackResult = await this.attemptRollback(client, containerName, previousConfig);
+        throw new DeployError({
+          code: 'DEPLOY_FAILED',
+          message: (err as Error).message,
+          details: {
+            rollback_attempted: true,
+            rollback_success: rollbackResult.success,
+            rollback_errors: rollbackResult.errors,
+          },
+        });
+      }
+      throw err;
+    }
 
-    const previousConfig =
-      (artifact.metadata['previous_container_config'] as Record<string, unknown> | null | undefined) ??
-      null;
     const startedAt = new Date(this.deps.now()).toISOString();
 
     const recordPayload = {
@@ -307,27 +327,39 @@ export class UnraidHomelabBackend implements DeploymentBackend {
       return { success: false, errors: ['no previous container to roll back to'] };
     }
     const client = await this.deps.getClient(details.host_id);
+    return this.attemptRollback(client, details.container_name, details.previous_container_config);
+  }
+
+  // -- private helpers ----------------------------------------------------
+
+  /**
+   * Internal rollback helper shared by `rollback()` and the deploy error path.
+   * Stops + removes the current container, re-adds the previous config, and
+   * polls until the container is running.
+   */
+  private async attemptRollback(
+    client: UnraidEmhttpClient,
+    containerName: string,
+    previousConfig: Record<string, unknown>,
+  ): Promise<RollbackResult> {
     const errors: string[] = [];
     try {
-      await client.stopContainer(details.container_name);
-      await client.removeContainer(details.container_name);
-      await client.addContainer(details.previous_container_config);
-      await client.startContainer(details.container_name);
-      await this.pollForRunning(client, details.container_name, 60_000);
+      await client.stopContainer(containerName);
+      await client.removeContainer(containerName);
+      await client.addContainer(previousConfig);
+      await client.startContainer(containerName);
+      await this.pollForRunning(client, containerName, 60_000);
     } catch (err) {
       errors.push((err as Error).message);
       return { success: false, errors };
     }
-    const previousImage =
-      (details.previous_container_config['image'] as string | undefined) ?? 'unknown';
+    const previousImage = (previousConfig['image'] as string | undefined) ?? 'unknown';
     return {
       success: true,
       restoredArtifactId: `docker://${previousImage}`,
       errors,
     };
   }
-
-  // -- private helpers ----------------------------------------------------
 
   private async pollForRunning(
     client: UnraidEmhttpClient,
