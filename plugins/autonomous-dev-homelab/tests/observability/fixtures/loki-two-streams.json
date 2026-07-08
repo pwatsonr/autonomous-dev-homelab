@@ -1,0 +1,31 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "streams",
+    "result": [
+      {
+        "stream": {
+          "container": "web-api",
+          "app": "web",
+          "namespace": "prod",
+          "level": "error"
+        },
+        "values": [
+          ["1782208800000000000", "ERROR: database connection refused after 3 retries"],
+          ["1782208740000000000", "WARN: slow query detected (2500ms)"]
+        ]
+      },
+      {
+        "stream": {
+          "container": "auth-service",
+          "app": "auth",
+          "namespace": "prod",
+          "level": "info"
+        },
+        "values": [
+          ["1782208800000000000", "INFO: user login successful uid=42"]
+        ]
+      }
+    ]
+  }
+}
