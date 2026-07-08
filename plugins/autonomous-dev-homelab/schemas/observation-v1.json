@@ -24,7 +24,11 @@
         "entity_gone",
         "replica_mismatch",
         "image_changed",
-        "prometheus_alert"
+        "prometheus_alert",
+        "datastore_unhealthy",
+        "replication_lag",
+        "datastore_near_capacity",
+        "datastore_disk_pressure"
       ]
     },
     "resource": { "type": "string", "minLength": 1 },

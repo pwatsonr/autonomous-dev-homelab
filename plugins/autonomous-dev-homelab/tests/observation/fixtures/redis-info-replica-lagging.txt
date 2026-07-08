@@ -1,0 +1,17 @@
+# Server
+redis_version:7.2.4
+
+# Clients
+connected_clients:90
+maxclients:100
+
+# Memory
+used_memory:89400320
+maxmemory:104857600
+
+# Replication
+role:slave
+master_host:redis-primary
+master_port:6379
+master_link_status:up
+master_last_io_seconds_ago:120

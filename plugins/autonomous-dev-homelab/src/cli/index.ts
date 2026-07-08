@@ -31,6 +31,8 @@ import {
 import { runEnumerate } from './commands/enumerate.js';
 import { runRefresh } from './commands/refresh.js';
 import { runClassify } from './commands/classify.js';
+import { runDatastores } from './commands/datastores.js';
+import { DatastoreProbe } from '../discovery/datastore-probe.js';
 import { DeepEnumerator } from '../discovery/deep-enumerator.js';
 import { GraphStore } from '../discovery/graph-store.js';
 import { RefreshEngine } from '../discovery/refresh.js';
@@ -759,6 +761,23 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       exitCode = await runClassify(
         { json: cmdOpts.json === true },
         { roleClassifier, streams },
+      );
+    });
+  inventoryCmd
+    .command('datastores')
+    .description(
+      'Probe graph entities with role=database|cache and print a datastore inventory summary (issue #42).',
+    )
+    .option('--json', 'emit JSON summary instead of human-readable output')
+    .action(async (cmdOpts: { json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      const graphStore = new GraphStore(graphPath);
+      const datastoreProbe = new DatastoreProbe(graphStore);
+      exitCode = await runDatastores(
+        { json: cmdOpts.json === true },
+        { datastoreProbe, streams },
       );
     });
 
