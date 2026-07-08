@@ -9,6 +9,8 @@
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
+import * as yaml from 'js-yaml';
 
 export interface DataLoaderOptions {
   /** Override homelab data dir; default resolves from env. */
@@ -17,9 +19,14 @@ export interface DataLoaderOptions {
 
 function resolveDataDir(override?: string): string {
   if (override !== undefined) return override;
-  const fromEnv = process.env['HOMELAB_DATA_DIR'] ?? process.env['CLAUDE_PLUGIN_DATA'];
+  const fromEnv =
+    process.env['AUTONOMOUS_DEV_HOMELAB_DATA_DIR'] ??
+    process.env['HOMELAB_DATA_DIR'] ??
+    process.env['CLAUDE_PLUGIN_DATA'];
   if (fromEnv !== undefined && fromEnv !== '') return fromEnv;
-  return path.resolve(process.cwd(), '.homelab-data');
+  // Match the CLI/bootstrap default so the panel reads the same dir the
+  // discover/observe commands write to.
+  return path.join(os.homedir(), '.autonomous-dev-homelab');
 }
 
 async function readJsonOrEmpty<T>(filePath: string, fallback: T): Promise<T> {
@@ -100,9 +107,16 @@ export class HomelabDataLoader {
   }
 
   async loadInventory(): Promise<InventoryEntry[]> {
-    // Inventory lives in a YAML file in production; the portal loader
-    // delegates to a JSON sidecar when present (and otherwise returns
-    // empty so the panel renders without crashing).
+    // Inventory is written as YAML by `discover`/InventoryManager. Read it
+    // directly (falling back to a JSON sidecar, then empty, so the panel
+    // renders without crashing when nothing has been discovered yet).
+    try {
+      const raw = await fs.readFile(path.join(this.dataDir, 'inventory.yaml'), 'utf8');
+      const parsed = yaml.load(raw) as { platforms?: InventoryEntry[] } | undefined;
+      return parsed?.platforms ?? [];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     const inv = await readJsonOrEmpty<{ platforms?: InventoryEntry[] }>(
       path.join(this.dataDir, 'inventory.json'),
       { platforms: [] },

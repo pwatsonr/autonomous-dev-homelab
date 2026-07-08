@@ -13,6 +13,7 @@
  */
 
 import * as path from 'node:path';
+import * as os from 'node:os';
 import * as readline from 'node:readline';
 import { Command } from 'commander';
 import { ConsentManager } from '../consent/manager.js';
@@ -85,7 +86,10 @@ function defaultResolveDataDir(override: string | undefined, env: NodeJS.Process
   if (override !== undefined) return path.resolve(override);
   const fromEnv = env[DATA_DIR_ENV];
   if (fromEnv !== undefined && fromEnv !== '') return path.resolve(fromEnv);
-  return path.resolve(process.cwd(), '.autonomous-dev-homelab');
+  // Stable per-user data dir (matches config/bootstrap/autofix and the portal
+  // loader) rather than a cwd-relative dir, so discovered inventory and
+  // observations land in one place the portal can read.
+  return path.join(os.homedir(), '.autonomous-dev-homelab');
 }
 
 /**
