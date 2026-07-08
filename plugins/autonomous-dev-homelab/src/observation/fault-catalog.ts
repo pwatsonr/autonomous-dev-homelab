@@ -157,6 +157,31 @@ export const FAULT_CATALOG: Readonly<Record<FaultPattern, FaultCatalogEntry>> =
       default_request_type: 'infra',
       destructiveness: 'data-affecting',
     },
+    // Capacity / fill-rate patterns (issue #44, invariant #62)
+    capacity_warning: {
+      pattern: 'capacity_warning',
+      detection:
+        'capacity probe: storage fill ratio exceeds warn threshold (default 80 %); emitted for any capacity-bearing entity (storage-array, storage-disk, share, datastore, pool)',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
+    capacity_critical: {
+      pattern: 'capacity_critical',
+      detection:
+        'capacity probe: storage fill ratio exceeds critical threshold (default 90 %); same entity kinds as capacity_warning',
+      severity: 'P0',
+      default_request_type: 'infra',
+      destructiveness: 'data-affecting',
+    },
+    capacity_growth: {
+      pattern: 'capacity_growth',
+      detection:
+        'capacity probe: fill-rate projection shows storage reaching 100 % within the configured growth window (default 7 days), even when below warn threshold',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
   });
 
 /** Type-guard: narrows a string to `FaultPattern` if it is a known key. */

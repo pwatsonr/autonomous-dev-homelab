@@ -35,3 +35,17 @@ export type {
   PrometheusAlert,
   AlertProbeOptions,
 } from './alert.js';
+export {
+  CapacityProbe,
+  parseDfLine,
+  parseZpoolListLine,
+  dfMountPath,
+  readCapacityFromAttributes,
+  isCapacityKind,
+  CAPACITY_KINDS,
+} from './capacity.js';
+export type {
+  CapacityExecSource,
+  CapacitySample,
+  CapacityProbeOptions,
+} from './capacity.js';

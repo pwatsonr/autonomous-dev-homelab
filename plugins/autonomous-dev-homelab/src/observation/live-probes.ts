@@ -6,10 +6,11 @@
  * - docker-swarm-manager / docker-swarm-worker → 1× swarmContainerHealthProbe
  * - unraid → 1× unraidArrayHealthProbe + 1× unraidPoolHealthProbe (in that order)
  * - When `alertProbe` is supplied, it is appended after host probes (issue #37).
- * - When `datastoreHealthProbe` is supplied, it is appended last (issue #43).
+ * - When `datastoreHealthProbe` is supplied, it is appended after alertProbe (issue #43).
+ * - When `capacityProbe` is supplied, it is appended last (issue #44).
  *
- * Ordering MUST match config.hosts ordering, with alertProbe then datastoreHealthProbe
- * appended last.
+ * Ordering MUST match config.hosts ordering, with alertProbe, datastoreHealthProbe,
+ * then capacityProbe appended last.
  *
  * When `pool` is supplied, each probe receives a real exec source backed by
  * that host's connection from the pool. When `pool` is absent (unit tests),
@@ -47,6 +48,15 @@ export interface BuildLiveProbesOptions {
    * unavailable.
    */
   datastoreHealthProbe?: Probe;
+  /**
+   * Optional capacity probe (issue #44, invariant #62). When provided, it is
+   * appended to the probe list last. The probe enumerates all capacity-bearing
+   * entities from the graph (storage-array, storage-disk, share, datastore,
+   * pool) and emits capacity_warning / capacity_critical / capacity_growth
+   * observations. Constructed by the caller with a graph store + pool-backed
+   * exec source. Omitted when the graph store is unavailable.
+   */
+  capacityProbe?: Probe;
 }
 
 /**
@@ -100,11 +110,19 @@ export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOpt
     probes.push(opts.alertProbe);
   }
 
-  // Append the datastore health probe last when provided (issue #43).
+  // Append the datastore health probe when provided (issue #43).
   // The probe reads from the graph store and uses the pool-backed exec source
   // that was injected at construction time.
   if (opts?.datastoreHealthProbe !== undefined) {
     probes.push(opts.datastoreHealthProbe);
+  }
+
+  // Append the capacity probe last when provided (issue #44).
+  // The probe enumerates all capacity-bearing graph entities and emits
+  // fill-ratio + growth-rate observations. Appended after datastore health
+  // so the collector runs storage-health checks before capacity checks.
+  if (opts?.capacityProbe !== undefined) {
+    probes.push(opts.capacityProbe);
   }
 
   return probes;
