@@ -28,6 +28,10 @@ import {
   runInventoryGet,
   runInventoryRemove,
 } from './commands/inventory.js';
+import { runEnumerate } from './commands/enumerate.js';
+import { DeepEnumerator } from '../discovery/deep-enumerator.js';
+import { GraphStore } from '../discovery/graph-store.js';
+import '../discovery/enumerators/index.js';
 import { buildPlatformCommand } from './commands/platform.js';
 import { buildAuditCommand } from './commands/audit.js';
 import { buildConsentCommand } from './commands/consent.js';
@@ -567,6 +571,47 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
           ...(cmdOpts.yes === true ? { yes: true } : {}),
         },
         { inventoryManager, caManager, streams },
+      );
+    });
+  inventoryCmd
+    .command('enumerate')
+    .description('Deep-enumerate platform children (nodes/services/containers/networks) into the graph.')
+    .option('--platform <id>', 'enumerate only this platform (default: all)')
+    .option('--json', 'emit JSON summary instead of human-readable output')
+    .action(async (cmdOpts: { platform?: string; json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const inventoryPath = path.join(dataDir, 'inventory.yaml');
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      const inventoryManager = new InventoryManager(inventoryPath);
+      const graphStore = new GraphStore(graphPath);
+      // Build a pool wired to the inventory (same pattern as platform/connect).
+      const preloaded = new Map<string, import('../discovery/inventory-types.js').Platform>();
+      const ensure = async (id: string): Promise<void> => {
+        if (preloaded.has(id)) return;
+        const e = await inventoryManager.getPlatform(id);
+        if (e !== null) preloaded.set(id, e);
+      };
+      // Pre-load all platforms so the pool factory can serve them.
+      const allPlatforms = await inventoryManager.listPlatforms();
+      for (const p of allPlatforms) {
+        preloaded.set(p.id, p);
+      }
+      const enumeratePool = new ConnectionPool({}, (id: string) => {
+        const entry = preloaded.get(id);
+        if (entry === undefined) {
+          throw new Error(`platform '${id}' not loaded`);
+        }
+        return createConnection(id, entry);
+      });
+      void ensure; // ensure is available for future lazy-load use
+      const deepEnumerator = new DeepEnumerator(inventoryManager, enumeratePool, graphStore);
+      exitCode = await runEnumerate(
+        {
+          platform: cmdOpts.platform,
+          json: cmdOpts.json === true,
+        },
+        { deepEnumerator, streams },
       );
     });
 
