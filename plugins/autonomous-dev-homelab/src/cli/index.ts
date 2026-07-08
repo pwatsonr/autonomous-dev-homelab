@@ -31,6 +31,9 @@ import {
 import { runEnumerate } from './commands/enumerate.js';
 import { runRefresh } from './commands/refresh.js';
 import { runClassify } from './commands/classify.js';
+import { runDatastores } from './commands/datastores.js';
+import { DatastoreProbe } from '../discovery/datastore-probe.js';
+import { DatastoreHealthProbe } from '../observation/probes/datastore-health.js';
 import { DeepEnumerator } from '../discovery/deep-enumerator.js';
 import { GraphStore } from '../discovery/graph-store.js';
 import { RefreshEngine } from '../discovery/refresh.js';
@@ -157,7 +160,7 @@ async function buildEnumerationDeps(
   graphStore: InstanceType<typeof GraphStore>,
   dataDir: string,
   env: NodeJS.ProcessEnv,
-): Promise<{ deepEnumerator: DeepEnumerator }> {
+): Promise<{ deepEnumerator: DeepEnumerator; pool: ConnectionPool }> {
   const preloaded = new Map<string, import('../discovery/inventory-types.js').Platform>();
   const allPlatforms = await inventoryManager.listPlatforms();
   for (const p of allPlatforms) {
@@ -215,7 +218,7 @@ async function buildEnumerationDeps(
     return createConnection(id, entry);
   });
   const deepEnumerator = new DeepEnumerator(inventoryManager, pool, graphStore);
-  return { deepEnumerator };
+  return { deepEnumerator, pool };
 }
 
 /**
@@ -439,19 +442,40 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       const graphPath = path.join(dataDir, 'inventory-graph.yaml');
       let alertProbe: AlertProbe | undefined;
       try {
-        const graphStore = new GraphStore(graphPath);
+        const alertGraphStore = new GraphStore(graphPath);
         alertProbe = new AlertProbe({
           platformId: 'monitoring',
           http: new FetchAlertHttpSource(),
-          graphStore,
+          graphStore: alertGraphStore,
         });
       } catch {
         // Graph construction failure — proceed without the alert probe.
         alertProbe = undefined;
       }
+      // Build the datastore health probe (issue #43) with the same pool and
+      // the graph store so it can exec per-engine health commands into live
+      // containers. Uses the primary platform id as the probe's platformId
+      // (first host's hostname, or a synthetic sentinel when host list is empty).
+      // Probe reads all kind='datastore' entities from the graph independently
+      // of the platformId filter — platformId is used only for dedup keys.
+      const observeGraphStore = new GraphStore(graphPath);
+      const primaryPlatformId = observeRuntime.config.hosts[0]?.hostname ?? 'homelab';
+      const datastoreExecSource = {
+        platformId: primaryPlatformId,
+        exec: async (command: string) => {
+          const conn = await observeRuntime!.pool.getConnection(primaryPlatformId);
+          return conn.exec(command);
+        },
+      };
+      const datastoreHealthProbe = new DatastoreHealthProbe(
+        primaryPlatformId,
+        observeGraphStore,
+        datastoreExecSource,
+      );
       liveProbes = buildLiveProbes(observeRuntime.config, {
         pool: observeRuntime.pool,
         alertProbe,
+        datastoreHealthProbe,
       });
     } catch {
       // Config absent, Vault unreachable, or other bootstrap error —
@@ -759,6 +783,39 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       exitCode = await runClassify(
         { json: cmdOpts.json === true },
         { roleClassifier, streams },
+      );
+    });
+  inventoryCmd
+    .command('datastores')
+    .description(
+      'Probe graph entities with role=database|cache and print a datastore inventory summary (issue #42).',
+    )
+    .option('--json', 'emit JSON summary instead of human-readable output')
+    .action(async (cmdOpts: { json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const inventoryPath = path.join(dataDir, 'inventory.yaml');
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      const inventoryManager = new InventoryManager(inventoryPath);
+      const graphStore = new GraphStore(graphPath);
+      // Build the connection pool (Vault-materialized SSH creds) so the
+      // DatastoreProbe can connect to each entity's platform and exec
+      // structure-only introspection inside the container. Degrades
+      // gracefully: if no config/Vault is available, the pool is still
+      // built (empty creds) and introspection falls through to health=unknown.
+      let datastorePool: ConnectionPool | undefined;
+      try {
+        const { pool } = await buildEnumerationDeps(inventoryManager, graphStore, dataDir, env);
+        datastorePool = pool;
+      } catch {
+        // Config absent or Vault unreachable — proceed without live connections;
+        // datastores will still be discovered from the graph with health=unknown.
+        datastorePool = undefined;
+      }
+      const datastoreProbe = new DatastoreProbe(graphStore, { pool: datastorePool });
+      exitCode = await runDatastores(
+        { json: cmdOpts.json === true },
+        { datastoreProbe, streams },
       );
     });
 

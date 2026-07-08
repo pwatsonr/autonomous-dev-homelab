@@ -56,7 +56,15 @@ export type FaultPattern =
    * label (critical→P0, warning→P1, else P2). Resource derives from the
    * first non-empty label in priority order: instance, service, job, pod.
    */
-  | 'prometheus_alert';
+  | 'prometheus_alert'
+  /** Datastore health (issue #43): datastore unreachable or liveness probe failed. */
+  | 'datastore_unhealthy'
+  /** Datastore health (issue #43): replication lag exceeds threshold or replica absent. */
+  | 'replication_lag'
+  /** Datastore health (issue #43): connection count approaching configured maximum. */
+  | 'datastore_near_capacity'
+  /** Datastore health (issue #43): datastore disk usage approaching configured limit. */
+  | 'datastore_disk_pressure';
 
 export interface Observation {
   /** UUID v4. */

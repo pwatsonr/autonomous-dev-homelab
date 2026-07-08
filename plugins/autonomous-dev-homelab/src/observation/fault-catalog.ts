@@ -128,6 +128,35 @@ export const FAULT_CATALOG: Readonly<Record<FaultPattern, FaultCatalogEntry>> =
       default_request_type: 'infra',
       destructiveness: 'reversible',
     },
+    // Datastore health patterns (issue #43)
+    datastore_unhealthy: {
+      pattern: 'datastore_unhealthy',
+      detection: 'datastore liveness probe: exec client ping/status returns error or non-zero exit',
+      severity: 'P0',
+      default_request_type: 'infra',
+      destructiveness: 'data-affecting',
+    },
+    replication_lag: {
+      pattern: 'replication_lag',
+      detection: 'datastore replication probe: replica lag exceeds threshold or replication slot absent',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'data-affecting',
+    },
+    datastore_near_capacity: {
+      pattern: 'datastore_near_capacity',
+      detection: 'datastore capacity probe: connection count or memory usage approaching configured maximum',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
+    datastore_disk_pressure: {
+      pattern: 'datastore_disk_pressure',
+      detection: 'datastore disk probe: data directory usage approaching configured limit',
+      severity: 'P0',
+      default_request_type: 'infra',
+      destructiveness: 'data-affecting',
+    },
   });
 
 /** Type-guard: narrows a string to `FaultPattern` if it is a known key. */

@@ -29,11 +29,16 @@ const EXPECTED: ReadonlyArray<
   { pattern: 'image_changed', severity: 'P2', default_request_type: 'infra', destructiveness: 'reversible' },
   // Prometheus/Alertmanager probe added by issue #37.
   { pattern: 'prometheus_alert', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
+  // Datastore health patterns added by issue #43.
+  { pattern: 'datastore_unhealthy', severity: 'P0', default_request_type: 'infra', destructiveness: 'data-affecting' },
+  { pattern: 'replication_lag', severity: 'P1', default_request_type: 'infra', destructiveness: 'data-affecting' },
+  { pattern: 'datastore_near_capacity', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
+  { pattern: 'datastore_disk_pressure', severity: 'P0', default_request_type: 'infra', destructiveness: 'data-affecting' },
 ];
 
 describe('FAULT_CATALOG', () => {
-  test('contains exactly 13 entries (9 original + 3 inventory-drift from issue #31 + 1 prometheus_alert from issue #37)', () => {
-    expect(Object.keys(FAULT_CATALOG)).toHaveLength(13);
+  test('contains exactly 17 entries (9 original + 3 inventory-drift from #31 + 1 prometheus_alert from #37 + 4 datastore health from #43)', () => {
+    expect(Object.keys(FAULT_CATALOG)).toHaveLength(17);
   });
 
   test('is frozen and rejects mutation in strict mode', () => {
