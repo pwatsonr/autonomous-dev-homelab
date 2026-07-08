@@ -57,6 +57,8 @@ import { buildConfigCommand } from './commands/config-validate.js';
 import { buildVaultCommand } from './commands/vault-ping.js';
 import { buildAutofixCommand } from './commands/autofix.js';
 import { buildBackupCommand } from './commands/backup.js';
+import { buildLogsCommand } from './commands/logs.js';
+import { LogsService, FetchLogsHttpSource } from '../observability/logs.js';
 import { assembleRuntime } from '../live/bootstrap.js';
 import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
@@ -563,6 +565,23 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       exitCode = portal.lastExitCode();
     });
     program.addCommand(portal.command);
+  }
+
+  // `logs` command: query Loki / OpenSearch logs (issue #38, read-only).
+  // Wires a production FetchLogsHttpSource + graph-store-based discovery.
+  // Config overrides are accepted via --loki-url / --opensearch-url flags.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+    const logsGraphStore = new GraphStore(graphPath);
+    const logsService = new LogsService({
+      http: new FetchLogsHttpSource(),
+      graphStore: logsGraphStore,
+    });
+    const logsHandle = buildLogsCommand({ streams, logsService });
+    logsHandle.command.hook('preAction', () => { handled = true; });
+    logsHandle.command.hook('postAction', () => { exitCode = logsHandle.lastExitCode(); });
+    program.addCommand(logsHandle.command);
   }
 
   // `config` command group: validate.

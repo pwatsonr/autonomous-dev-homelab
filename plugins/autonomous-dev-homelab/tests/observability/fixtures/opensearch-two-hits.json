@@ -1,0 +1,32 @@
+{
+  "took": 5,
+  "timed_out": false,
+  "_shards": { "total": 1, "successful": 1, "skipped": 0, "failed": 0 },
+  "hits": {
+    "total": { "value": 2, "relation": "eq" },
+    "hits": [
+      {
+        "_index": "logs-2026.06.23",
+        "_id": "abc123",
+        "_source": {
+          "@timestamp": "2026-06-23T10:00:00.000Z",
+          "message": "Pod web-deployment-7c8b9 restarted (OOMKilled)",
+          "log": { "level": "error" },
+          "kubernetes.pod_name": "web-deployment-7c8b9",
+          "service.name": "web"
+        }
+      },
+      {
+        "_index": "logs-2026.06.23",
+        "_id": "def456",
+        "_source": {
+          "@timestamp": "2026-06-23T09:55:00.000Z",
+          "message": "Readiness probe failed for container web",
+          "log": { "level": "warn" },
+          "kubernetes.pod_name": "web-deployment-7c8b9",
+          "service.name": "web"
+        }
+      }
+    ]
+  }
+}
