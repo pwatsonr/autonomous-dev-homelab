@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autonomous-dev/schemas/inventory-graph-v2.json",
+  "title": "Inventory Graph v2",
+  "description": "Entity+edge graph store. kind and type fields are open strings so new kinds/edge-types require no schema change (dynamic-first invariant, issue #62).",
+  "type": "object",
+  "required": ["version", "entities", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 2 },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/entity" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/edge" }
+    }
+  },
+  "definitions": {
+    "status": {
+      "type": "string",
+      "enum": ["active", "stale", "gone"]
+    },
+    "entity": {
+      "type": "object",
+      "required": ["id", "kind", "name", "attributes", "source", "discovered_at", "last_seen", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id":           { "type": "string", "minLength": 1 },
+        "kind":         { "type": "string", "minLength": 1 },
+        "name":         { "type": "string", "minLength": 1 },
+        "attributes":   { "type": "object", "additionalProperties": true },
+        "source":       { "type": "string", "minLength": 1 },
+        "platformId":   { "type": "string" },
+        "discovered_at":{ "type": "string", "format": "date-time" },
+        "last_seen":    { "type": "string", "format": "date-time" },
+        "status":       { "$ref": "#/definitions/status" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "type", "discovered_at", "last_seen", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id":           { "type": "string", "minLength": 1 },
+        "from":         { "type": "string", "minLength": 1 },
+        "to":           { "type": "string", "minLength": 1 },
+        "type":         { "type": "string", "minLength": 1 },
+        "attributes":   { "type": "object", "additionalProperties": true },
+        "discovered_at":{ "type": "string", "format": "date-time" },
+        "last_seen":    { "type": "string", "format": "date-time" },
+        "status":       { "$ref": "#/definitions/status" }
+      }
+    }
+  }
+}
