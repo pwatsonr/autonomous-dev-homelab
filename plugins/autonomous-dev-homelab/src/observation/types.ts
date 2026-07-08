@@ -42,7 +42,13 @@ export type FaultPattern =
   | 'cert_expiry_imminent'
   | 'backup_overdue'
   | 'service_5xx'
-  | 'daemon_heartbeat_stale';
+  | 'daemon_heartbeat_stale'
+  /** Inventory drift (issue #31): entity absent from the latest refresh sweep. */
+  | 'entity_gone'
+  /** Inventory drift (issue #31): service running replicas below desired count. */
+  | 'replica_mismatch'
+  /** Inventory drift (issue #31): entity image attribute changed between sweeps. */
+  | 'image_changed';
 
 export interface Observation {
   /** UUID v4. */

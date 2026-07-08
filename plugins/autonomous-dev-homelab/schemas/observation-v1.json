@@ -20,7 +20,10 @@
         "cert_expiry_imminent",
         "backup_overdue",
         "service_5xx",
-        "daemon_heartbeat_stale"
+        "daemon_heartbeat_stale",
+        "entity_gone",
+        "replica_mismatch",
+        "image_changed"
       ]
     },
     "resource": { "type": "string", "minLength": 1 },

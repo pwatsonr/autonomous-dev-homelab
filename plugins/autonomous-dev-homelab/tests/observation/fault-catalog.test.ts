@@ -23,11 +23,15 @@ const EXPECTED: ReadonlyArray<
   { pattern: 'backup_overdue', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
   { pattern: 'service_5xx', severity: 'P1', default_request_type: 'bug', destructiveness: 'reversible' },
   { pattern: 'daemon_heartbeat_stale', severity: 'P0', default_request_type: 'hotfix', destructiveness: 'reversible' },
+  // Inventory drift patterns added by issue #31.
+  { pattern: 'entity_gone', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
+  { pattern: 'replica_mismatch', severity: 'P1', default_request_type: 'bug', destructiveness: 'reversible' },
+  { pattern: 'image_changed', severity: 'P2', default_request_type: 'infra', destructiveness: 'reversible' },
 ];
 
 describe('FAULT_CATALOG', () => {
-  test('contains exactly 9 entries', () => {
-    expect(Object.keys(FAULT_CATALOG)).toHaveLength(9);
+  test('contains exactly 12 entries (9 original + 3 inventory-drift from issue #31)', () => {
+    expect(Object.keys(FAULT_CATALOG)).toHaveLength(12);
   });
 
   test('is frozen and rejects mutation in strict mode', () => {
