@@ -30,9 +30,11 @@ import {
 } from './commands/inventory.js';
 import { runEnumerate } from './commands/enumerate.js';
 import { runRefresh } from './commands/refresh.js';
+import { runClassify } from './commands/classify.js';
 import { DeepEnumerator } from '../discovery/deep-enumerator.js';
 import { GraphStore } from '../discovery/graph-store.js';
 import { RefreshEngine } from '../discovery/refresh.js';
+import { RoleClassifier } from '../discovery/role-catalog.js';
 import { loadHomelabConfig } from '../config/loader.js';
 import { VaultSecretResolver } from '../secrets/vault-resolver.js';
 import '../discovery/enumerators/index.js';
@@ -716,6 +718,23 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
           json: cmdOpts.json === true,
         },
         { refreshEngine, streams },
+      );
+    });
+  inventoryCmd
+    .command('classify')
+    .description(
+      'Classify service entities in the graph by role (reverse-proxy, database, cache, …).',
+    )
+    .option('--json', 'emit JSON summary instead of human-readable output')
+    .action(async (cmdOpts: { json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      const graphStore = new GraphStore(graphPath);
+      const roleClassifier = new RoleClassifier(graphStore);
+      exitCode = await runClassify(
+        { json: cmdOpts.json === true },
+        { roleClassifier, streams },
       );
     });
 
