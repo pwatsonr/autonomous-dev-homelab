@@ -3,9 +3,11 @@
  * Covers T009-1 through T009-4 from SPEC REQ-000055 §5.10.
  * Also covers pool-injection (GAP 2 fix): probes receive real exec sources
  * when a ConnectionPool is supplied.
+ * Also covers alert probe registration (issue #37).
  */
 
 import { buildLiveProbes } from '../../src/observation/live-probes';
+import { AlertProbe } from '../../src/observation/probes/alert';
 import type { HomelabConfig } from '../../src/config/types';
 import type { ConnectionPool } from '../../src/connection/pool';
 
@@ -169,5 +171,49 @@ describe('buildLiveProbes — pool injection (GAP 2)', () => {
       const obs = await p.scan();
       expect(Array.isArray(obs)).toBe(true);
     }
+  });
+});
+
+describe('buildLiveProbes — alert probe registration (issue #37)', () => {
+  function makeAlertProbe(): AlertProbe {
+    return new AlertProbe({
+      platformId: 'monitoring',
+      http: { get: jest.fn().mockResolvedValue({ ok: true, status: 200, json: jest.fn().mockResolvedValue([]) }) },
+    });
+  }
+
+  it('without alertProbe option, probe count is unchanged', () => {
+    const probes = buildLiveProbes(THREE_HOST_CONFIG);
+    expect(probes).toHaveLength(4);
+  });
+
+  it('with alertProbe option, probe count is +1 and alert probe is last', () => {
+    const alertProbe = makeAlertProbe();
+    const probes = buildLiveProbes(THREE_HOST_CONFIG, { alertProbe });
+    expect(probes).toHaveLength(5);
+    expect(probes[4]).toBe(alertProbe);
+    expect(probes[4]!.id).toBe('alert');
+    expect(probes[4]!.cadence).toBe('fast');
+  });
+
+  it('alert probe appears in the probe list and implements the Probe interface', () => {
+    const alertProbe = makeAlertProbe();
+    const probes = buildLiveProbes(THREE_HOST_CONFIG, { alertProbe });
+    const ap = probes.find((p) => p.id === 'alert');
+    expect(ap).toBeDefined();
+    expect(typeof ap!.id).toBe('string');
+    expect(typeof ap!.platformId).toBe('string');
+    expect(['fast', 'medium', 'slow', 'daily']).toContain(ap!.cadence);
+    expect(typeof ap!.scan).toBe('function');
+  });
+
+  it('alert probe.scan() returns [] when no endpoint is configured (graceful)', async () => {
+    const alertProbe = makeAlertProbe();
+    const probes = buildLiveProbes(THREE_HOST_CONFIG, { alertProbe });
+    const ap = probes.find((p) => p.id === 'alert')!;
+    const obs = await ap.scan();
+    expect(Array.isArray(obs)).toBe(true);
+    // no endpointUrl and no graphStore → gracefully returns []
+    expect(obs).toEqual([]);
   });
 });

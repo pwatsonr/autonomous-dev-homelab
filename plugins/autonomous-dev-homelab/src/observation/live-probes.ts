@@ -5,8 +5,9 @@
  * Probe allocation:
  * - docker-swarm-manager / docker-swarm-worker → 1× swarmContainerHealthProbe
  * - unraid → 1× unraidArrayHealthProbe + 1× unraidPoolHealthProbe (in that order)
+ * - When `alertProbe` is supplied, it is appended as the last probe (issue #37).
  *
- * Ordering MUST match config.hosts ordering.
+ * Ordering MUST match config.hosts ordering, with the alert probe appended last.
  *
  * When `pool` is supplied, each probe receives a real exec source backed by
  * that host's connection from the pool. When `pool` is absent (unit tests),
@@ -18,6 +19,7 @@ import type { Probe } from './types.js';
 import type { ConnectionPool } from '../connection/pool.js';
 import type { SwarmExecSource } from './probes/swarm.js';
 import type { UnraidExecSource } from './probes/unraid-health.js';
+import type { AlertProbe } from './probes/alert.js';
 import { swarmContainerHealthProbe } from './probes/swarm.js';
 import { unraidArrayHealthProbe, unraidPoolHealthProbe } from './probes/unraid-health.js';
 
@@ -28,6 +30,13 @@ export interface BuildLiveProbesOptions {
    * the probe's `scan()` method runs, not at construction time.
    */
   pool?: ConnectionPool;
+  /**
+   * When provided, the alert probe is appended to the probe list (issue #37).
+   * The probe is constructed by the caller so bootstrap code can inject the
+   * HTTP source and graph store without coupling this module to a specific
+   * implementation.
+   */
+  alertProbe?: AlertProbe;
 }
 
 /**
@@ -51,10 +60,11 @@ function poolExecSource(hostname: string, pool: ConnectionPool): SwarmExecSource
 
 /**
  * Build the probe list from the homelab config.
- * Ordering matches config.hosts iteration order.
+ * Ordering matches config.hosts iteration order, with the alert probe appended last.
  *
  * @param config - The operator's homelab config (host list drives probe allocation).
- * @param opts - Optional; supply `pool` to inject live connection-backed exec sources.
+ * @param opts - Optional; supply `pool` to inject live connection-backed exec sources,
+ *               and/or `alertProbe` to include the Prometheus/Alertmanager probe.
  */
 export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOptions): Probe[] {
   const probes: Probe[] = [];
@@ -71,6 +81,11 @@ export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOpt
       probes.push(unraidArrayHealthProbe(host.hostname, src));
       probes.push(unraidPoolHealthProbe(host.hostname, src));
     }
+  }
+
+  // Append the alert probe last when provided (issue #37).
+  if (opts?.alertProbe !== undefined) {
+    probes.push(opts.alertProbe);
   }
 
   return probes;

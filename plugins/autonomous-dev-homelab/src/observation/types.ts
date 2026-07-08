@@ -48,7 +48,15 @@ export type FaultPattern =
   /** Inventory drift (issue #31): service running replicas below desired count. */
   | 'replica_mismatch'
   /** Inventory drift (issue #31): entity image attribute changed between sweeps. */
-  | 'image_changed';
+  | 'image_changed'
+  /**
+   * Prometheus/Alertmanager firing alert (issue #37, invariant #62).
+   * Generic pattern: maps ANY firing alert to an observation. Alert name +
+   * labels are carried in `details`. Severity derives from the `severity`
+   * label (critical→P0, warning→P1, else P2). Resource derives from the
+   * first non-empty label in priority order: instance, service, job, pod.
+   */
+  | 'prometheus_alert';
 
 export interface Observation {
   /** UUID v4. */

@@ -27,11 +27,13 @@ const EXPECTED: ReadonlyArray<
   { pattern: 'entity_gone', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
   { pattern: 'replica_mismatch', severity: 'P1', default_request_type: 'bug', destructiveness: 'reversible' },
   { pattern: 'image_changed', severity: 'P2', default_request_type: 'infra', destructiveness: 'reversible' },
+  // Prometheus/Alertmanager probe added by issue #37.
+  { pattern: 'prometheus_alert', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
 ];
 
 describe('FAULT_CATALOG', () => {
-  test('contains exactly 12 entries (9 original + 3 inventory-drift from issue #31)', () => {
-    expect(Object.keys(FAULT_CATALOG)).toHaveLength(12);
+  test('contains exactly 13 entries (9 original + 3 inventory-drift from issue #31 + 1 prometheus_alert from issue #37)', () => {
+    expect(Object.keys(FAULT_CATALOG)).toHaveLength(13);
   });
 
   test('is frozen and rejects mutation in strict mode', () => {
