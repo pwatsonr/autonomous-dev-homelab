@@ -64,7 +64,26 @@ export type FaultPattern =
   /** Datastore health (issue #43): connection count approaching configured maximum. */
   | 'datastore_near_capacity'
   /** Datastore health (issue #43): datastore disk usage approaching configured limit. */
-  | 'datastore_disk_pressure';
+  | 'datastore_disk_pressure'
+  /**
+   * Capacity observation (issue #44, invariant #62): storage fill ratio
+   * has exceeded the warn threshold (default 80 %). Emitted for any
+   * capacity-bearing entity (storage-array, storage-disk, share,
+   * datastore, pool). Severity P1.
+   */
+  | 'capacity_warning'
+  /**
+   * Capacity observation (issue #44, invariant #62): storage fill ratio
+   * has exceeded the critical threshold (default 90 %). Severity P0.
+   */
+  | 'capacity_critical'
+  /**
+   * Capacity observation (issue #44, invariant #62): fill rate projects
+   * the storage target to reach 100 % within the configured growth window
+   * (default 7 days), even when current fill is below the warn threshold.
+   * Severity P1.
+   */
+  | 'capacity_growth';
 
 export interface Observation {
   /** UUID v4. */

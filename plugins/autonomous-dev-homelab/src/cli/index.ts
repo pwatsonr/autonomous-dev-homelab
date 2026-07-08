@@ -48,6 +48,7 @@ import { buildCACommand } from './commands/ca.js';
 import { buildObserveCommand } from './commands/observe.js';
 import { buildLiveProbes } from '../observation/live-probes.js';
 import { AlertProbe, FetchAlertHttpSource } from '../observation/probes/alert.js';
+import { CapacityProbe } from '../observation/probes/capacity.js';
 import { buildSafetyCommand } from './commands/safety.js';
 import { buildCancelActionCommand } from './commands/cancel-action.js';
 import { buildMigrationsCommand } from './commands/migrations.js';
@@ -477,10 +478,36 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
         observeGraphStore,
         datastoreExecSource,
       );
+      // Build the capacity probe (issue #44) with the same graph store.
+      // It enumerates all capacity-bearing entities (storage-array, share,
+      // datastore, pool, …) and emits fill-ratio + growth-rate observations.
+      // Uses a pool-backed exec source so live df/zpool commands route over
+      // the real MCP/SSH connection. Best-effort: any exec failure for a
+      // target is caught per-target and the probe degrades gracefully.
+      const capacityGraphStore = new GraphStore(graphPath);
+      let capacityProbe: CapacityProbe | undefined;
+      try {
+        const capacityExecSource = {
+          platformId: primaryPlatformId,
+          exec: async (command: string) => {
+            const conn = await observeRuntime!.pool.getConnection(primaryPlatformId);
+            return conn.exec(command);
+          },
+        };
+        capacityProbe = new CapacityProbe({
+          platformId: primaryPlatformId,
+          graphStore: capacityGraphStore,
+          execSource: capacityExecSource,
+        });
+      } catch {
+        // Graph construction or exec source failure — proceed without capacity probe.
+        capacityProbe = undefined;
+      }
       liveProbes = buildLiveProbes(observeRuntime.config, {
         pool: observeRuntime.pool,
         alertProbe,
         datastoreHealthProbe,
+        capacityProbe,
       });
     } catch {
       // Config absent, Vault unreachable, or other bootstrap error —

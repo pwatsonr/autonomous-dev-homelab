@@ -34,11 +34,15 @@ const EXPECTED: ReadonlyArray<
   { pattern: 'replication_lag', severity: 'P1', default_request_type: 'infra', destructiveness: 'data-affecting' },
   { pattern: 'datastore_near_capacity', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
   { pattern: 'datastore_disk_pressure', severity: 'P0', default_request_type: 'infra', destructiveness: 'data-affecting' },
+  // Capacity / fill-rate patterns added by issue #44.
+  { pattern: 'capacity_warning', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
+  { pattern: 'capacity_critical', severity: 'P0', default_request_type: 'infra', destructiveness: 'data-affecting' },
+  { pattern: 'capacity_growth', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
 ];
 
 describe('FAULT_CATALOG', () => {
-  test('contains exactly 17 entries (9 original + 3 inventory-drift from #31 + 1 prometheus_alert from #37 + 4 datastore health from #43)', () => {
-    expect(Object.keys(FAULT_CATALOG)).toHaveLength(17);
+  test('contains exactly 20 entries (9 original + 3 inventory-drift from #31 + 1 prometheus_alert from #37 + 4 datastore health from #43 + 3 capacity from #44)', () => {
+    expect(Object.keys(FAULT_CATALOG)).toHaveLength(20);
   });
 
   test('is frozen and rejects mutation in strict mode', () => {
