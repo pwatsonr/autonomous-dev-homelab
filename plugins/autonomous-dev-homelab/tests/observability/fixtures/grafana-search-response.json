@@ -1,0 +1,42 @@
+[
+  {
+    "uid": "sonarr-uid-001",
+    "title": "Sonarr Overview",
+    "url": "/d/sonarr-uid-001/sonarr-overview",
+    "folderTitle": "Media",
+    "tags": ["sonarr", "media", "arr"],
+    "type": "dash-db"
+  },
+  {
+    "uid": "postgres-uid-002",
+    "title": "PostgreSQL Metrics",
+    "url": "/d/postgres-uid-002/postgresql-metrics",
+    "folderTitle": "Databases",
+    "tags": ["postgres", "database", "sql"],
+    "type": "dash-db"
+  },
+  {
+    "uid": "node-uid-003",
+    "title": "Node Exporter Full",
+    "url": "/d/node-uid-003/node-exporter-full",
+    "folderTitle": "Infrastructure",
+    "tags": ["node", "system", "linux"],
+    "type": "dash-db"
+  },
+  {
+    "uid": "redis-uid-004",
+    "title": "Redis Dashboard",
+    "url": "/d/redis-uid-004/redis-dashboard",
+    "folderTitle": "Databases",
+    "tags": ["redis", "cache", "database"],
+    "type": "dash-db"
+  },
+  {
+    "uid": "authentik-uid-005",
+    "title": "Authentik - Identity Provider",
+    "url": "/d/authentik-uid-005/authentik-identity-provider",
+    "folderTitle": "Security",
+    "tags": ["authentik", "identity", "auth"],
+    "type": "dash-db"
+  }
+]

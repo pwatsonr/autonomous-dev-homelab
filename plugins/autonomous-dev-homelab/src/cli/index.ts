@@ -59,6 +59,8 @@ import { buildAutofixCommand } from './commands/autofix.js';
 import { buildBackupCommand } from './commands/backup.js';
 import { buildLogsCommand } from './commands/logs.js';
 import { LogsService, FetchLogsHttpSource } from '../observability/logs.js';
+import { buildGrafanaCommand } from './commands/grafana.js';
+import { FetchGrafanaHttpSource } from '../observability/grafana.js';
 import { assembleRuntime } from '../live/bootstrap.js';
 import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
@@ -864,6 +866,25 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
         { datastoreProbe, streams },
       );
     });
+
+  // `grafana` command group: dashboards.
+  // Discovers the Grafana endpoint generically from the inventory graph
+  // (invariant #62). Wired to FetchGrafanaHttpSource for live HTTP calls;
+  // reads the API token from GRAFANA_API_TOKEN (never hard-coded).
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+    const grafanaGraphStore = new GraphStore(graphPath);
+    const grafanaHandle = buildGrafanaCommand({
+      http: new FetchGrafanaHttpSource(),
+      graphStore: grafanaGraphStore,
+      env,
+      streams,
+    });
+    grafanaHandle.command.hook('preAction', () => { handled = true; });
+    grafanaHandle.command.hook('postAction', () => { exitCode = grafanaHandle.lastExitCode(); });
+    program.addCommand(grafanaHandle.command);
+  }
 
   try {
     await program.parseAsync(opts.argv, { from: 'user' });
