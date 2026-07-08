@@ -18,6 +18,7 @@ import type { ObservationCollector } from '../../observation/collector.js';
 import type { ObservationStore } from '../../observation/persistence.js';
 import type { ObservationPromoter } from '../../observation/promoter.js';
 import type { Observation, RequestType } from '../../observation/types.js';
+import type { HealthScorer } from '../../observability/health.js';
 import { EXIT_OK, EXIT_USAGE } from '../exit-codes.js';
 import {
   printError,
@@ -34,6 +35,14 @@ export interface ObserveCommandDeps {
   streams?: OutputStreams;
   /** Test seam; defaults to `() => Date.now()`. */
   now?: () => number;
+  /**
+   * Optional health scorer (issue #40). When provided, `observe scan` will
+   * invoke `healthScorer.scoreAll(now)` after persisting new observations,
+   * so that `health_score` / `health_grade` attributes on all graph entities
+   * are refreshed after every probe cycle. Omitted when the graph store is
+   * unavailable or in dry-run mode.
+   */
+  healthScorer?: HealthScorer;
 }
 
 export interface ObserveCommandHandle {
@@ -85,7 +94,7 @@ export function buildObserveCommand(deps: ObserveCommandDeps): ObserveCommandHan
     .option('--json', 'emit JSON to stdout')
     .action(
       async (cmdOpts: { platform?: string; dryRun?: boolean; json?: boolean }) => {
-        lastExit = await runObserveScan(cmdOpts, deps.collector, streams);
+        lastExit = await runObserveScan(cmdOpts, deps.collector, streams, now, deps.healthScorer);
       },
     );
 
@@ -134,9 +143,22 @@ async function runObserveScan(
   opts: { platform?: string; dryRun?: boolean; json?: boolean },
   collector: ObservationCollector,
   streams: OutputStreams,
+  now: () => number,
+  healthScorer?: HealthScorer,
 ): Promise<number> {
   const filter = opts.platform !== undefined ? { platformId: opts.platform } : {};
   const fresh = await collector.runAll(filter, { dryRun: opts.dryRun === true });
+
+  // After persisting observations, refresh health scores for all graph entities
+  // (issue #40). Skipped in dry-run mode (no observations were persisted).
+  if (healthScorer !== undefined && opts.dryRun !== true) {
+    try {
+      await healthScorer.scoreAll(now());
+    } catch {
+      // Health scoring errors must not fail the scan.
+    }
+  }
+
   if (opts.json === true) {
     printJson(
       { count: fresh.length, dryRun: opts.dryRun === true, observations: fresh },
