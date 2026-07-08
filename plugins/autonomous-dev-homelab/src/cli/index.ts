@@ -44,6 +44,7 @@ import { buildConsentCommand } from './commands/consent.js';
 import { buildCACommand } from './commands/ca.js';
 import { buildObserveCommand } from './commands/observe.js';
 import { buildLiveProbes } from '../observation/live-probes.js';
+import { AlertProbe, FetchAlertHttpSource } from '../observation/probes/alert.js';
 import { buildSafetyCommand } from './commands/safety.js';
 import { buildCancelActionCommand } from './commands/cancel-action.js';
 import { buildMigrationsCommand } from './commands/migrations.js';
@@ -428,7 +429,30 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     let liveProbes: import('../observation/types.js').Probe[] = [];
     try {
       observeRuntime = await assembleRuntime({ env });
-      liveProbes = buildLiveProbes(observeRuntime.config, { pool: observeRuntime.pool });
+      // Build the AlertProbe using generic graph-discovery (invariant #62).
+      // The graph store reads the inventory-graph.yaml populated by
+      // `inventory enumerate` + `inventory classify`; Alertmanager/Prometheus
+      // endpoints are discovered from entities with role=monitoring whose
+      // image contains "alertmanager" or "prometheus". Construction is
+      // best-effort: if the graph file does not exist yet, discoverEndpoint
+      // returns null and the probe degrades to [] silently.
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      let alertProbe: AlertProbe | undefined;
+      try {
+        const graphStore = new GraphStore(graphPath);
+        alertProbe = new AlertProbe({
+          platformId: 'monitoring',
+          http: new FetchAlertHttpSource(),
+          graphStore,
+        });
+      } catch {
+        // Graph construction failure — proceed without the alert probe.
+        alertProbe = undefined;
+      }
+      liveProbes = buildLiveProbes(observeRuntime.config, {
+        pool: observeRuntime.pool,
+        alertProbe,
+      });
     } catch {
       // Config absent, Vault unreachable, or other bootstrap error —
       // proceed with empty probe list. `list` and `promote` still work.

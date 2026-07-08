@@ -51,6 +51,55 @@ export interface AlertHttpSource {
   get(url: string): Promise<AlertHttpResponse>;
 }
 
+/**
+ * Default timeout for the fetch-based HTTP source.
+ * Alertmanager/Prometheus are expected to respond quickly; 10 s is
+ * generous while still preventing the probe from hanging indefinitely.
+ */
+const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Production `AlertHttpSource` backed by the global `fetch` API
+ * (available in Node.js ≥ 18). Uses `AbortSignal.timeout` so a
+ * slow/hanging endpoint does not block the collector loop.
+ *
+ * Usage:
+ * ```ts
+ * const probe = new AlertProbe({ http: new FetchAlertHttpSource(), ... });
+ * ```
+ */
+export class FetchAlertHttpSource implements AlertHttpSource {
+  private readonly timeoutMs: number;
+
+  /**
+   * @param opts.timeoutMs - Request timeout in milliseconds (default 10 000).
+   */
+  constructor(opts: { timeoutMs?: number } = {}) {
+    this.timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+  }
+
+  /**
+   * Issue a GET request to `url` and return a minimal response wrapper.
+   * Throws on network-level failure (the probe's caller handles this by
+   * returning `[]`).
+   *
+   * @param url - The fully-qualified URL to fetch.
+   * @returns A response object implementing `AlertHttpResponse`.
+   */
+  async get(url: string): Promise<AlertHttpResponse> {
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(this.timeoutMs),
+      headers: { Accept: 'application/json' },
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      json: (): Promise<unknown> => response.json() as Promise<unknown>,
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Alertmanager / Prometheus wire formats
 // ---------------------------------------------------------------------------

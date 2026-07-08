@@ -28,7 +28,7 @@ export type {
 } from './backup-overdue.js';
 export { DaemonHeartbeatProbe } from './daemon-heartbeat.js';
 export type { DaemonHeartbeatProbeOptions } from './daemon-heartbeat.js';
-export { AlertProbe, alertSeverity, alertResource, discoverEndpoint } from './alert.js';
+export { AlertProbe, FetchAlertHttpSource, alertSeverity, alertResource, discoverEndpoint } from './alert.js';
 export type {
   AlertHttpResponse,
   AlertHttpSource,
