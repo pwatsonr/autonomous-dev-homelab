@@ -120,6 +120,14 @@ export const FAULT_CATALOG: Readonly<Record<FaultPattern, FaultCatalogEntry>> =
       default_request_type: 'infra',
       destructiveness: 'reversible',
     },
+    prometheus_alert: {
+      pattern: 'prometheus_alert',
+      detection:
+        'Alertmanager/Prometheus firing alert: GET /api/v2/alerts?active=true or /api/v1/alerts',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
   });
 
 /** Type-guard: narrows a string to `FaultPattern` if it is a known key. */

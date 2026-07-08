@@ -1,0 +1,33 @@
+{
+  "status": "success",
+  "data": {
+    "alerts": [
+      {
+        "labels": {
+          "alertname": "KubePodCrashLooping",
+          "severity": "critical",
+          "namespace": "default",
+          "pod": "web-deployment-7c8b9-xxxx",
+          "job": "kube-state-metrics"
+        },
+        "annotations": {
+          "message": "Pod is crash-looping"
+        },
+        "state": "firing",
+        "activeAt": "2026-06-23T08:00:00.000Z",
+        "value": "1"
+      },
+      {
+        "labels": {
+          "alertname": "PendingAlert",
+          "severity": "warning",
+          "job": "prometheus"
+        },
+        "annotations": {},
+        "state": "pending",
+        "activeAt": "2026-06-23T09:00:00.000Z",
+        "value": "0"
+      }
+    ]
+  }
+}

@@ -23,7 +23,8 @@
         "daemon_heartbeat_stale",
         "entity_gone",
         "replica_mismatch",
-        "image_changed"
+        "image_changed",
+        "prometheus_alert"
       ]
     },
     "resource": { "type": "string", "minLength": 1 },
