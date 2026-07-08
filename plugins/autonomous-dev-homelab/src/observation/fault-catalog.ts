@@ -99,6 +99,27 @@ export const FAULT_CATALOG: Readonly<Record<FaultPattern, FaultCatalogEntry>> =
       default_request_type: 'hotfix',
       destructiveness: 'reversible',
     },
+    entity_gone: {
+      pattern: 'entity_gone',
+      detection: 'inventory refresh sweep: entity last_seen exceeds gone threshold',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
+    replica_mismatch: {
+      pattern: 'replica_mismatch',
+      detection: 'inventory refresh sweep: replicas_running < replicas_desired',
+      severity: 'P1',
+      default_request_type: 'bug',
+      destructiveness: 'reversible',
+    },
+    image_changed: {
+      pattern: 'image_changed',
+      detection: 'inventory refresh sweep: entity image attribute differs from previous sweep',
+      severity: 'P2',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
   });
 
 /** Type-guard: narrows a string to `FaultPattern` if it is a known key. */

@@ -29,8 +29,10 @@ import {
   runInventoryRemove,
 } from './commands/inventory.js';
 import { runEnumerate } from './commands/enumerate.js';
+import { runRefresh } from './commands/refresh.js';
 import { DeepEnumerator } from '../discovery/deep-enumerator.js';
 import { GraphStore } from '../discovery/graph-store.js';
+import { RefreshEngine } from '../discovery/refresh.js';
 import { loadHomelabConfig } from '../config/loader.js';
 import { VaultSecretResolver } from '../secrets/vault-resolver.js';
 import '../discovery/enumerators/index.js';
@@ -132,6 +134,85 @@ function buildReadlinePrompter(): (msg: string) => Promise<boolean> {
       rl.close();
     }
   };
+}
+
+/**
+ * Build an inventory-backed connection pool with Vault-materialized SSH
+ * credentials. Shared by `inventory enumerate` and `inventory refresh` to
+ * avoid duplicating the Vault key materialization logic.
+ *
+ * Degrades gracefully: if the operator config or Vault is unavailable,
+ * platforms remain unenriched and fail per-platform during enumeration.
+ *
+ * @param inventoryManager - Source of platform records.
+ * @param dataDir          - Data directory for key files.
+ * @param env              - Process environment (for config + Vault vars).
+ * @returns A pre-loaded `ConnectionPool` and `DeepEnumerator`.
+ */
+async function buildEnumerationDeps(
+  inventoryManager: InstanceType<typeof InventoryManager>,
+  graphStore: InstanceType<typeof GraphStore>,
+  dataDir: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ deepEnumerator: DeepEnumerator }> {
+  const preloaded = new Map<string, import('../discovery/inventory-types.js').Platform>();
+  const allPlatforms = await inventoryManager.listPlatforms();
+  for (const p of allPlatforms) {
+    preloaded.set(p.id, p);
+  }
+  // Credential linking: discovery finds platforms by host/IP but has no
+  // credentials; the SSH creds live in the operator config keyed by
+  // hostname. Materialize each config host's Vault key once and enrich any
+  // discovered platform whose host matches a config host's ssh target, so
+  // enumeration can connect. Matches on host/IP — no hard-coded names.
+  try {
+    const cfg = await loadHomelabConfig({ env });
+    const resolver = new VaultSecretResolver(cfg.vault, env);
+    const keysDir = path.join(dataDir, '.keys');
+    await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
+    const credByHost = new Map<string, { user: string; port: number; keyPath: string }>();
+    for (const h of cfg.hosts) {
+      try {
+        const resolved = await resolver.resolve(h.ssh_fallback.key_ref);
+        const keyPath = path.join(keysDir, `enum-${h.hostname}.key`);
+        await fs.writeFile(keyPath, resolved.value, { mode: 0o600 });
+        const cred = { user: h.ssh_fallback.user, port: h.ssh_fallback.port, keyPath };
+        credByHost.set(h.ssh_fallback.host, cred);
+        credByHost.set(h.hostname, cred);
+      } catch {
+        // skip hosts whose key cannot be resolved
+      }
+    }
+    for (const [id, p] of preloaded) {
+      const cred = credByHost.get(p.host) ?? credByHost.get(p.ssh_host ?? '');
+      if (cred !== undefined) {
+        preloaded.set(id, {
+          ...p,
+          ssh_host: p.host,
+          ssh_port: cred.port,
+          connection: {
+            ...(p.connection ?? {}),
+            ssh_user: cred.user,
+            ssh_key_path: cred.keyPath,
+            prefer: 'ssh',
+          },
+        });
+      }
+    }
+    resolver.dispose();
+  } catch {
+    // No config/Vault available — platforms stay unenriched and will fail
+    // gracefully per-platform during enumeration.
+  }
+  const pool = new ConnectionPool({}, (id: string) => {
+    const entry = preloaded.get(id);
+    if (entry === undefined) {
+      throw new Error(`platform '${id}' not loaded`);
+    }
+    return createConnection(id, entry);
+  });
+  const deepEnumerator = new DeepEnumerator(inventoryManager, pool, graphStore);
+  return { deepEnumerator };
 }
 
 /**
@@ -587,77 +668,54 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       const graphPath = path.join(dataDir, 'inventory-graph.yaml');
       const inventoryManager = new InventoryManager(inventoryPath);
       const graphStore = new GraphStore(graphPath);
-      // Build a pool wired to the inventory (same pattern as platform/connect).
-      const preloaded = new Map<string, import('../discovery/inventory-types.js').Platform>();
-      const ensure = async (id: string): Promise<void> => {
-        if (preloaded.has(id)) return;
-        const e = await inventoryManager.getPlatform(id);
-        if (e !== null) preloaded.set(id, e);
-      };
-      // Pre-load all platforms so the pool factory can serve them.
-      const allPlatforms = await inventoryManager.listPlatforms();
-      for (const p of allPlatforms) {
-        preloaded.set(p.id, p);
-      }
-      // Credential linking: discovery finds platforms by host/IP but has no
-      // credentials; the SSH creds live in the operator config keyed by
-      // hostname. Materialize each config host's Vault key once and enrich any
-      // discovered platform whose host matches a config host's ssh target, so
-      // enumeration can connect. Matches on host/IP — no hard-coded names.
-      try {
-        const cfg = await loadHomelabConfig({ env });
-        const resolver = new VaultSecretResolver(cfg.vault, env);
-        const keysDir = path.join(dataDir, '.keys');
-        await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-        const credByHost = new Map<string, { user: string; port: number; keyPath: string }>();
-        for (const h of cfg.hosts) {
-          try {
-            const resolved = await resolver.resolve(h.ssh_fallback.key_ref);
-            const keyPath = path.join(keysDir, `enum-${h.hostname}.key`);
-            await fs.writeFile(keyPath, resolved.value, { mode: 0o600 });
-            const cred = { user: h.ssh_fallback.user, port: h.ssh_fallback.port, keyPath };
-            credByHost.set(h.ssh_fallback.host, cred);
-            credByHost.set(h.hostname, cred);
-          } catch {
-            // skip hosts whose key cannot be resolved
-          }
-        }
-        for (const [id, p] of preloaded) {
-          const cred = credByHost.get(p.host) ?? credByHost.get(p.ssh_host ?? '');
-          if (cred !== undefined) {
-            preloaded.set(id, {
-              ...p,
-              ssh_host: p.host,
-              ssh_port: cred.port,
-              connection: {
-                ...(p.connection ?? {}),
-                ssh_user: cred.user,
-                ssh_key_path: cred.keyPath,
-                prefer: 'ssh',
-              },
-            });
-          }
-        }
-        resolver.dispose();
-      } catch {
-        // No config/Vault available — platforms stay unenriched and will fail
-        // gracefully per-platform during enumeration.
-      }
-      const enumeratePool = new ConnectionPool({}, (id: string) => {
-        const entry = preloaded.get(id);
-        if (entry === undefined) {
-          throw new Error(`platform '${id}' not loaded`);
-        }
-        return createConnection(id, entry);
-      });
-      void ensure; // ensure is available for future lazy-load use
-      const deepEnumerator = new DeepEnumerator(inventoryManager, enumeratePool, graphStore);
+      const { deepEnumerator } = await buildEnumerationDeps(
+        inventoryManager,
+        graphStore,
+        dataDir,
+        env,
+      );
       exitCode = await runEnumerate(
         {
           platform: cmdOpts.platform,
           json: cmdOpts.json === true,
         },
         { deepEnumerator, streams },
+      );
+    });
+  inventoryCmd
+    .command('refresh')
+    .description(
+      'Run one incremental refresh sweep: re-enumerate, reconcile staleness/gone, emit drift observations.',
+    )
+    .option('--platform <id>', 'sweep only this platform (default: all)')
+    .option('--json', 'emit JSON summary instead of human-readable output')
+    .action(async (cmdOpts: { platform?: string; json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const inventoryPath = path.join(dataDir, 'inventory.yaml');
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      const inventoryManager = new InventoryManager(inventoryPath);
+      const graphStore = new GraphStore(graphPath);
+      const { deepEnumerator } = await buildEnumerationDeps(
+        inventoryManager,
+        graphStore,
+        dataDir,
+        env,
+      );
+      const observationStore = new ObservationStore(dataDir);
+      const dedupCache = new DedupCache();
+      const refreshEngine = new RefreshEngine(
+        deepEnumerator,
+        graphStore,
+        observationStore,
+        dedupCache,
+      );
+      exitCode = await runRefresh(
+        {
+          platform: cmdOpts.platform,
+          json: cmdOpts.json === true,
+        },
+        { refreshEngine, streams },
       );
     });
 
