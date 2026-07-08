@@ -56,6 +56,7 @@ import { buildPortalCommand } from './commands/portal.js';
 import { buildConfigCommand } from './commands/config-validate.js';
 import { buildVaultCommand } from './commands/vault-ping.js';
 import { buildAutofixCommand } from './commands/autofix.js';
+import { buildBackupCommand } from './commands/backup.js';
 import { assembleRuntime } from '../live/bootstrap.js';
 import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
@@ -646,6 +647,32 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
         }
       });
     program.addCommand(connectCmd);
+  }
+
+  // `backup` command group: run, list, verify, restore, drivers.
+  // Lazily assembles the runtime only for `run` and `restore` which need a
+  // live connection. `list` and `verify` are read-only and never need one.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    let backupRuntime: Awaited<ReturnType<typeof assembleRuntime>> | null = null;
+    const backupGetConnection = async (platformId: string): Promise<import('../connection/base.js').Connection> => {
+      if (backupRuntime === null) backupRuntime = await assembleRuntime({ env });
+      return backupRuntime.pool.getConnection(platformId);
+    };
+    const backupHandle = buildBackupCommand({
+      dataDir,
+      streams,
+      getConnection: backupGetConnection,
+    });
+    backupHandle.command.hook('preAction', () => { handled = true; });
+    backupHandle.command.hook('postAction', async () => {
+      exitCode = backupHandle.lastExitCode();
+      if (backupRuntime !== null) {
+        await backupRuntime.shutdown().catch(() => undefined);
+        backupRuntime = null;
+      }
+    });
+    program.addCommand(backupHandle.command);
   }
 
   const inventoryCmd = program
