@@ -22,10 +22,9 @@ export type {
   CertExpiryProbeOptions,
 } from './cert-expiry.js';
 export { BackupOverdueProbe } from './backup-overdue.js';
-export type {
-  BackupManifestEntry,
-  BackupOverdueProbeOptions,
-} from './backup-overdue.js';
+export type { BackupOverdueProbeOptions } from './backup-overdue.js';
+// BackupManifestEntry is now the canonical v2 type from src/backup/types.ts (#46).
+export type { BackupManifestEntry } from '../../backup/types.js';
 export { DaemonHeartbeatProbe } from './daemon-heartbeat.js';
 export type { DaemonHeartbeatProbeOptions } from './daemon-heartbeat.js';
 export { AlertProbe, FetchAlertHttpSource, alertSeverity, alertResource, discoverEndpoint } from './alert.js';

@@ -92,18 +92,28 @@ describe('verifyBackup', () => {
 
   it('selects the freshest entry when multiple exist for the same platform', async () => {
     const stale = signBackupEntry({
+      schema_version: 2,
       platform: 'proxmox',
+      target_id: 'pve-backup',
       backup_type: 'pve-backup',
       taken_at: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
       location: '/backups/proxmox/old.tar',
       size_bytes: 1,
+      max_age_seconds: 86_400,
+      checksum: '',
+      verified: false,
     });
     const fresh = signBackupEntry({
+      schema_version: 2,
       platform: 'proxmox',
+      target_id: 'pve-backup',
       backup_type: 'pve-backup',
       taken_at: new Date(Date.now() - 60_000).toISOString(),
       location: '/backups/proxmox/new.tar',
       size_bytes: 2,
+      max_age_seconds: 86_400,
+      checksum: '',
+      verified: false,
     });
     await writeBackupManifest([stale, fresh]);
     const result = await verifyBackup({ platform: 'proxmox', target: 'pve-1' });
