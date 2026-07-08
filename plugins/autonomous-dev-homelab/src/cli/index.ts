@@ -62,6 +62,8 @@ import { buildLogsCommand } from './commands/logs.js';
 import { LogsService, FetchLogsHttpSource } from '../observability/logs.js';
 import { buildGrafanaCommand } from './commands/grafana.js';
 import { FetchGrafanaHttpSource } from '../observability/grafana.js';
+import { buildHealthCommand } from './commands/health.js';
+import { HealthScorer } from '../observability/health.js';
 import { assembleRuntime } from '../live/bootstrap.js';
 import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
@@ -524,7 +526,24 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       store,
       promoter,
     });
-    const handle = buildObserveCommand({ collector, store, promoter, streams });
+
+    // Build the HealthScorer (issue #40, invariant #62). Best-effort: if the
+    // graph store is unavailable (no inventory-graph.yaml yet), the scorer
+    // silently returns 0 scored entities and the scan still succeeds.
+    const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+    let healthScorer: HealthScorer | undefined;
+    try {
+      const healthGraphStore = new GraphStore(graphPath);
+      healthScorer = new HealthScorer({
+        graphStore: healthGraphStore,
+        observationStore: store,
+      });
+    } catch {
+      // Graph construction failure — proceed without the health scorer.
+      healthScorer = undefined;
+    }
+
+    const handle = buildObserveCommand({ collector, store, promoter, streams, healthScorer });
     handle.command.hook('preAction', async (_t, actionCommand) => {
       await wrapPreAction(`observe ${actionCommand.name()}`, dataDir);
     });
@@ -911,6 +930,25 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     grafanaHandle.command.hook('preAction', () => { handled = true; });
     grafanaHandle.command.hook('postAction', () => { exitCode = grafanaHandle.lastExitCode(); });
     program.addCommand(grafanaHandle.command);
+  }
+
+  // `health` command group: score (issue #40, invariant #62).
+  // Scores ALL graph entities generically from their own observations.
+  // Writes health_score + health_grade back so the portal can read them
+  // per-entity. Uses the same graph + observation stores as the observe path.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+    const healthCmdGraphStore = new GraphStore(graphPath);
+    const healthCmdObsStore = new ObservationStore(dataDir);
+    const healthHandle = buildHealthCommand({
+      graphStore: healthCmdGraphStore,
+      observationStore: healthCmdObsStore,
+      streams,
+    });
+    healthHandle.command.hook('preAction', () => { handled = true; });
+    healthHandle.command.hook('postAction', () => { exitCode = healthHandle.lastExitCode(); });
+    program.addCommand(healthHandle.command);
   }
 
   try {
