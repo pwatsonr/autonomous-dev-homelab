@@ -29,6 +29,7 @@
 import type { Entity, Edge } from './graph-types.js';
 import type { GraphStore } from './graph-store.js';
 import type { Connection } from '../connection/base.js';
+import type { ConnectionPool } from '../connection/pool.js';
 
 // ---------------------------------------------------------------------------
 // Engine probe registry
@@ -575,17 +576,23 @@ export interface DatastoreExecSource {
  */
 export class DatastoreProbe {
   private readonly graphStore: GraphStore;
+  private readonly pool: ConnectionPool | undefined;
   private readonly now: string;
 
   /**
    * @param graphStore - Graph store to read entities from and upsert results to.
+   * @param opts.pool  - Connection pool for live introspection. When provided,
+   *   `probe()` obtains a connection per entity's `platformId` and passes it
+   *   to the engine probe's `introspect()`. When absent, introspection is
+   *   skipped and datastores are recorded with `health='unknown'`.
    * @param opts.now   - ISO-8601 timestamp (injected for determinism in tests).
    */
   constructor(
     graphStore: GraphStore,
-    opts: { now?: string } = {},
+    opts: { pool?: ConnectionPool; now?: string } = {},
   ) {
     this.graphStore = graphStore;
+    this.pool = opts.pool;
     this.now = opts.now ?? new Date().toISOString();
   }
 
@@ -595,14 +602,19 @@ export class DatastoreProbe {
    * For each candidate:
    *  1. Find the registered engine probe that matches the entity.
    *  2. If no probe matches, skip (non-datastore entity).
-   *  3. If a connection is provided, run structure-only introspection.
+   *  3. If a pool was provided, obtain a connection via
+   *     `pool.getConnection(entity.platformId)` and run structure-only
+   *     introspection. Degrades gracefully if the connection fails.
    *  4. Upsert a `kind='datastore'` entity and child `kind='database'` entities.
    *  5. Upsert `member-of` edges from each child to the datastore entity.
    *
-   * @param connection - Live connection to the platform (may be undefined for dry-run/test).
+   * @param connectionOverride - Optional single Connection override (used in
+   *   tests that provide a pre-built mock rather than a pool). When both
+   *   `opts.pool` and `connectionOverride` are provided, `connectionOverride`
+   *   takes precedence for all entities.
    * @returns Probe result summary.
    */
-  async probe(connection?: Connection): Promise<DatastoreProbeResult> {
+  async probe(connectionOverride?: Connection): Promise<DatastoreProbeResult> {
     const candidates = await this.findCandidates();
     const result: DatastoreProbeResult = {
       discovered: candidates.length,
@@ -625,6 +637,17 @@ export class DatastoreProbe {
         result.skipped++;
         result.results.push({ datastoreEntity, children: [], edges: [] });
         continue;
+      }
+
+      // Resolve connection: override first (tests), then pool keyed on platformId.
+      let connection: Connection | undefined = connectionOverride;
+      if (connection === undefined && this.pool !== undefined && entity.platformId !== undefined) {
+        try {
+          connection = await this.pool.getConnection(entity.platformId);
+        } catch {
+          // Platform not reachable — degrade gracefully (health=unknown).
+          connection = undefined;
+        }
       }
 
       let introspection: DatastoreIntrospection;

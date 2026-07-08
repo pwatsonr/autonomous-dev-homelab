@@ -5,9 +5,11 @@
  * Probe allocation:
  * - docker-swarm-manager / docker-swarm-worker → 1× swarmContainerHealthProbe
  * - unraid → 1× unraidArrayHealthProbe + 1× unraidPoolHealthProbe (in that order)
- * - When `alertProbe` is supplied, it is appended as the last probe (issue #37).
+ * - When `alertProbe` is supplied, it is appended after host probes (issue #37).
+ * - When `datastoreHealthProbe` is supplied, it is appended last (issue #43).
  *
- * Ordering MUST match config.hosts ordering, with the alert probe appended last.
+ * Ordering MUST match config.hosts ordering, with alertProbe then datastoreHealthProbe
+ * appended last.
  *
  * When `pool` is supplied, each probe receives a real exec source backed by
  * that host's connection from the pool. When `pool` is absent (unit tests),
@@ -37,6 +39,14 @@ export interface BuildLiveProbesOptions {
    * implementation.
    */
   alertProbe?: AlertProbe;
+  /**
+   * Optional datastore health probe (issue #43). When provided, it is
+   * appended to the probe list after all host probes (and after alertProbe).
+   * The probe's `scan()` reads `kind='datastore'` entities from the graph
+   * store and emits health observations. Omitted when the graph store is
+   * unavailable.
+   */
+  datastoreHealthProbe?: Probe;
 }
 
 /**
@@ -60,11 +70,13 @@ function poolExecSource(hostname: string, pool: ConnectionPool): SwarmExecSource
 
 /**
  * Build the probe list from the homelab config.
- * Ordering matches config.hosts iteration order, with the alert probe appended last.
+ * Ordering matches config.hosts iteration order, with alertProbe then
+ * datastoreHealthProbe appended last.
  *
  * @param config - The operator's homelab config (host list drives probe allocation).
  * @param opts - Optional; supply `pool` to inject live connection-backed exec sources,
- *               and/or `alertProbe` to include the Prometheus/Alertmanager probe.
+ *               `alertProbe` to include the Prometheus/Alertmanager probe (issue #37),
+ *               and/or `datastoreHealthProbe` to include the datastore health probe (#43).
  */
 export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOptions): Probe[] {
   const probes: Probe[] = [];
@@ -83,9 +95,16 @@ export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOpt
     }
   }
 
-  // Append the alert probe last when provided (issue #37).
+  // Append the alert probe when provided (issue #37).
   if (opts?.alertProbe !== undefined) {
     probes.push(opts.alertProbe);
+  }
+
+  // Append the datastore health probe last when provided (issue #43).
+  // The probe reads from the graph store and uses the pool-backed exec source
+  // that was injected at construction time.
+  if (opts?.datastoreHealthProbe !== undefined) {
+    probes.push(opts.datastoreHealthProbe);
   }
 
   return probes;
