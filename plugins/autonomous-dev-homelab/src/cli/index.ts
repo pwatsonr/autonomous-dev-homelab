@@ -31,6 +31,8 @@ import {
 import { runEnumerate } from './commands/enumerate.js';
 import { DeepEnumerator } from '../discovery/deep-enumerator.js';
 import { GraphStore } from '../discovery/graph-store.js';
+import { loadHomelabConfig } from '../config/loader.js';
+import { VaultSecretResolver } from '../secrets/vault-resolver.js';
 import '../discovery/enumerators/index.js';
 import { buildPlatformCommand } from './commands/platform.js';
 import { buildAuditCommand } from './commands/audit.js';
@@ -596,6 +598,50 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       const allPlatforms = await inventoryManager.listPlatforms();
       for (const p of allPlatforms) {
         preloaded.set(p.id, p);
+      }
+      // Credential linking: discovery finds platforms by host/IP but has no
+      // credentials; the SSH creds live in the operator config keyed by
+      // hostname. Materialize each config host's Vault key once and enrich any
+      // discovered platform whose host matches a config host's ssh target, so
+      // enumeration can connect. Matches on host/IP — no hard-coded names.
+      try {
+        const cfg = await loadHomelabConfig({ env });
+        const resolver = new VaultSecretResolver(cfg.vault, env);
+        const keysDir = path.join(dataDir, '.keys');
+        await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
+        const credByHost = new Map<string, { user: string; port: number; keyPath: string }>();
+        for (const h of cfg.hosts) {
+          try {
+            const resolved = await resolver.resolve(h.ssh_fallback.key_ref);
+            const keyPath = path.join(keysDir, `enum-${h.hostname}.key`);
+            await fs.writeFile(keyPath, resolved.value, { mode: 0o600 });
+            const cred = { user: h.ssh_fallback.user, port: h.ssh_fallback.port, keyPath };
+            credByHost.set(h.ssh_fallback.host, cred);
+            credByHost.set(h.hostname, cred);
+          } catch {
+            // skip hosts whose key cannot be resolved
+          }
+        }
+        for (const [id, p] of preloaded) {
+          const cred = credByHost.get(p.host) ?? credByHost.get(p.ssh_host ?? '');
+          if (cred !== undefined) {
+            preloaded.set(id, {
+              ...p,
+              ssh_host: p.host,
+              ssh_port: cred.port,
+              connection: {
+                ...(p.connection ?? {}),
+                ssh_user: cred.user,
+                ssh_key_path: cred.keyPath,
+                prefer: 'ssh',
+              },
+            });
+          }
+        }
+        resolver.dispose();
+      } catch {
+        // No config/Vault available — platforms stay unenriched and will fail
+        // gracefully per-platform during enumeration.
       }
       const enumeratePool = new ConnectionPool({}, (id: string) => {
         const entry = preloaded.get(id);
