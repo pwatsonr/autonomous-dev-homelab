@@ -32,6 +32,8 @@ import { runEnumerate } from './commands/enumerate.js';
 import { runRefresh } from './commands/refresh.js';
 import { runClassify } from './commands/classify.js';
 import { runDatastores } from './commands/datastores.js';
+import { runTopology } from './commands/topology.js';
+import { TopologyEnricher } from '../discovery/topology/index.js';
 import { DatastoreProbe } from '../discovery/datastore-probe.js';
 import { DatastoreHealthProbe } from '../observation/probes/datastore-health.js';
 import { DeepEnumerator } from '../discovery/deep-enumerator.js';
@@ -910,6 +912,23 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
       exitCode = await runDatastores(
         { json: cmdOpts.json === true },
         { datastoreProbe, streams },
+      );
+    });
+  inventoryCmd
+    .command('topology')
+    .description(
+      'Enrich the inventory graph with reverse-proxy routes, Vault secret-tree structure, and derived dependency edges (issue #29).',
+    )
+    .option('--json', 'emit JSON summary instead of human-readable output')
+    .action(async (cmdOpts: { json?: boolean }) => {
+      if (adminBlocked) return;
+      const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+      const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+      const graphStore = new GraphStore(graphPath);
+      const topologyEnricher = new TopologyEnricher(graphStore, env);
+      exitCode = await runTopology(
+        { json: cmdOpts.json === true },
+        { topologyEnricher, streams },
       );
     });
 
