@@ -40,11 +40,13 @@ const EXPECTED: ReadonlyArray<
   { pattern: 'capacity_growth', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
   // Policy-drift pattern added by issue #35.
   { pattern: 'policy_drift', severity: 'P1', default_request_type: 'infra', destructiveness: 'reversible' },
+  // Observability gap pattern added by issue #41.
+  { pattern: 'observability_gap', severity: 'P2', default_request_type: 'infra', destructiveness: 'read-only' },
 ];
 
 describe('FAULT_CATALOG', () => {
-  test('contains exactly 21 entries (9 original + 3 inventory-drift from #31 + 1 prometheus_alert from #37 + 4 datastore health from #43 + 3 capacity from #44 + 1 policy_drift from #35)', () => {
-    expect(Object.keys(FAULT_CATALOG)).toHaveLength(21);
+  test('contains exactly 22 entries (9 original + 3 inventory-drift from #31 + 1 prometheus_alert from #37 + 4 datastore health from #43 + 3 capacity from #44 + 1 policy_drift from #35 + 1 observability_gap from #41)', () => {
+    expect(Object.keys(FAULT_CATALOG)).toHaveLength(22);
   });
 
   test('is frozen and rejects mutation in strict mode', () => {

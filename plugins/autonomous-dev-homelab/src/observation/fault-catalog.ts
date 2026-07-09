@@ -192,6 +192,18 @@ export const FAULT_CATALOG: Readonly<Record<FaultPattern, FaultCatalogEntry>> =
       default_request_type: 'infra',
       destructiveness: 'reversible',
     },
+    // Observability gap pattern (issue #41, invariant #62)
+    observability_gap: {
+      pattern: 'observability_gap',
+      detection:
+        'observability onboarder (issue #41): a discovered service is not wired into metrics ' +
+        'scraping (Prometheus), log queryability (Loki/OpenSearch), or a Grafana dashboard; ' +
+        'one observation per missing channel per entity; details carry entityId, entityName, ' +
+        'channel, and an optional proposal for remediation',
+      severity: 'P2',
+      default_request_type: 'infra',
+      destructiveness: 'read-only',
+    },
   });
 
 /** Type-guard: narrows a string to `FaultPattern` if it is a known key. */

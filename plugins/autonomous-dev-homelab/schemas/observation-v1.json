@@ -32,7 +32,8 @@
         "capacity_warning",
         "capacity_critical",
         "capacity_growth",
-        "policy_drift"
+        "policy_drift",
+        "observability_gap"
       ]
     },
     "resource": { "type": "string", "minLength": 1 },
