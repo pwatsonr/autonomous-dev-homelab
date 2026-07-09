@@ -4,6 +4,20 @@
  * `build` is a NO-OP — the Swarm cluster pulls images at deploy time, so
  * this backend never builds or pushes images locally. `deploy` runs
  * `docker stack deploy` over SSH against a Swarm manager.
+ *
+ * Stateful-awareness (issue #33):
+ *   When the deploy target is stateful (role ∈ {database, cache} or the spec
+ *   declares named volumes), the deploy path:
+ *     1. Requires a fresh verified backup via `verifyBackup` BEFORE proceeding.
+ *        If no fresh backup exists, the deploy is BLOCKED with a clear error.
+ *     2. Does NOT issue any `docker volume rm` for named volumes — they are
+ *        reused across redeploys (data is preserved).
+ *   Stateless deploys are unaffected (no new backup requirement).
+ *   The backup gate respects the existing safety gate: `verifyBackup` from
+ *   `src/backup/orchestrator.ts` is the same function used by `gate.ts`.
+ *
+ * Invariant #62: stateful detection is entirely attribute-driven (role +
+ * declared volumes). No hard-coded service names appear in this file.
  */
 
 import { createHash } from 'node:crypto';
@@ -11,6 +25,11 @@ import * as path from 'node:path';
 import type { Connection } from '../../connection/base.js';
 import { DeployError } from '../errors.js';
 import { signDeploymentRecord } from '../sign-record.js';
+import {
+  isStatefulTarget,
+  DEFAULT_STATEFUL_CONFIG,
+  type StatefulDeployConfig,
+} from '../stateful-target.js';
 import type {
   BackendMetadata,
   BuildArtifact,
@@ -24,6 +43,14 @@ import type {
   RollbackResult,
 } from '../types.js';
 import { validateParameters } from '../validate-parameters.js';
+import type { BackupVerificationResult } from '../../backup/types.js';
+import type { VerifyInput } from '../../backup/orchestrator.js';
+
+/**
+ * Minimal `verifyBackup` signature used by the backend. Injected via deps so
+ * tests can mock it without touching the filesystem.
+ */
+export type VerifyBackupFn = (input: VerifyInput) => Promise<BackupVerificationResult>;
 
 export const PARAM_SCHEMA: Record<string, ParamSchema> = {
   manager_id: { type: 'string', required: true, format: 'identifier' },
@@ -33,6 +60,29 @@ export const PARAM_SCHEMA: Record<string, ParamSchema> = {
   service_name: { type: 'string', required: true, format: 'identifier' },
   health_url: { type: 'string', required: false, format: 'url' },
   health_timeout_seconds: { type: 'number', default: 180, range: [10, 600] },
+  /**
+   * Optional role attribute (from the discovery role catalog, issue #28).
+   * When set to a stateful role (e.g. "database", "cache"), the deploy path
+   * activates volume-preservation + backup gating (issue #33).
+   * Invariant #62: role is a generic attribute, never a service name.
+   */
+  role: { type: 'string', required: false },
+  /**
+   * Optional list of named Docker volumes owned by this service. When
+   * non-empty, the deploy is treated as stateful regardless of role.
+   * Invariant #62: volumes are declared by the compose file, not hard-coded.
+   */
+  named_volumes: {
+    type: 'array',
+    default: [],
+    items: { type: 'string' },
+  },
+  /**
+   * Optional backup platform key used when calling `verifyBackup`.
+   * Defaults to "docker" when absent. Operators set this to match the
+   * platform string used by the backup engine (e.g. "postgres", "redis").
+   */
+  backup_platform: { type: 'string', required: false },
 };
 
 export interface SwarmBackendDeps {
@@ -40,6 +90,17 @@ export interface SwarmBackendDeps {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   generateId?: () => string;
+  /**
+   * Optional `verifyBackup` override. Defaults to the real orchestrator
+   * function. Inject a mock in tests to avoid filesystem access.
+   */
+  verifyBackup?: VerifyBackupFn;
+  /**
+   * Optional stateful-deploy config. Defaults to `DEFAULT_STATEFUL_CONFIG`
+   * (requireBackup=true). Supply `{ requireBackup: false }` for admin bypass;
+   * this must be an EXPLICIT caller decision — never a silent default.
+   */
+  statefulConfig?: StatefulDeployConfig;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -66,6 +127,8 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
       sleep: deps.sleep ?? defaultSleep,
       now: deps.now ?? Date.now,
       generateId: deps.generateId ?? (() => `swarm-${Date.now().toString(36)}`),
+      verifyBackup: deps.verifyBackup ?? defaultVerifyBackup,
+      statefulConfig: deps.statefulConfig ?? DEFAULT_STATEFUL_CONFIG,
     };
   }
 
@@ -94,6 +157,9 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
     const stackName = params['stack_name'] as string;
     const serviceName = params['service_name'] as string;
     const composePath = params['compose_file_path'] as string;
+    const role = params['role'] as string | undefined;
+    const namedVolumes = (params['named_volumes'] as string[] | undefined) ?? [];
+    const backupPlatform = (params['backup_platform'] as string | undefined) ?? 'docker';
 
     // Path traversal guard: compose path must resolve inside repoPath.
     // The deploy contract does not pass `repoPath` directly; the resolved
@@ -105,6 +171,26 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
         code: 'INVALID_PARAMS',
         message: `compose_file_path '${composePath}' resolves outside the repo root`,
       });
+    }
+
+    // Stateful-awareness gate (issue #33).
+    // Detection is by role/attributes only — invariant #62.
+    const stateful = isStatefulTarget({ role, named_volumes: namedVolumes });
+    if (stateful && this.deps.statefulConfig.requireBackup) {
+      // Backup gate: BLOCK the deploy if no fresh verified backup exists.
+      // This mirrors the data-affecting path in src/safety/gate.ts — the same
+      // verifyBackup function is used, so the gate is not bypassed.
+      await this.deps.verifyBackup({
+        platform: backupPlatform,
+        target: `${stackName}_${serviceName}`,
+        freshnessOverrides: this.deps.statefulConfig.backupFreshnessOverrides,
+      });
+      // Volume preservation: named volumes are NOT removed before redeploy.
+      // `docker stack deploy` with --prune removes unused services but never
+      // removes named volumes by default. We do NOT issue `docker volume rm`
+      // for any volume in namedVolumes — they are left intact so existing data
+      // survives the redeploy. This is the correct behavior: volume removal
+      // would require an explicit operator action (data-affecting, backed up).
     }
 
     const conn = await this.deps.getConnection(managerId);
@@ -151,6 +237,7 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
       target: 'homelab-docker-swarm',
       envName: env,
       artifactLocation: artifact.location,
+      stateful,
       details: {
         manager_id: managerId,
         stack_name: stackName,
@@ -158,6 +245,7 @@ export class DockerSwarmHomelabBackend implements DeploymentBackend {
         image_uri: params['image_uri'] as string,
         previous_service_spec: previousServiceSpec,
         deployed_at: deployedAt,
+        ...(stateful ? { named_volumes: namedVolumes, backup_platform: backupPlatform } : {}),
       },
       deployedAt,
     });
@@ -299,4 +387,13 @@ function parseReplicaCount(inspectStdout: string): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Default `verifyBackup` implementation: delegates to the real backup
+ * orchestrator. Imported lazily to avoid circular deps when mocked in tests.
+ */
+async function defaultVerifyBackup(input: VerifyInput): Promise<BackupVerificationResult> {
+  const { verifyBackup } = await import('../../backup/orchestrator.js');
+  return verifyBackup(input);
 }

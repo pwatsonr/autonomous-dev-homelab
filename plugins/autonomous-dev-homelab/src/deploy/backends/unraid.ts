@@ -5,6 +5,20 @@
  * storage is backed by Unraid array shares supplied via `params.storage_mounts`.
  * Every emhttp call flows through the injected `UnraidEmhttpClient` —
  * the backend never invokes `child_process` directly.
+ *
+ * Stateful-awareness (issue #33):
+ *   When the deploy target is stateful (role ∈ {database, cache} or the spec
+ *   declares storage mounts), the deploy path:
+ *     1. Requires a fresh verified backup via `verifyBackup` BEFORE proceeding.
+ *        If no fresh backup exists, the deploy is BLOCKED with a clear error.
+ *     2. Does NOT destroy existing storage mounts — mounts are preserved and
+ *        reused, so data on the host path survives the container replacement.
+ *   Stateless deploys are unaffected (no new backup requirement).
+ *   The backup gate respects the existing safety gate: `verifyBackup` from
+ *   `src/backup/orchestrator.ts` is the same function used by `gate.ts`.
+ *
+ * Invariant #62: stateful detection is entirely attribute-driven (role +
+ * declared storage mounts). No hard-coded service names appear in this file.
  */
 
 import { DeployError } from '../errors.js';
@@ -14,6 +28,11 @@ import {
 } from '../persist-record.js';
 import { unraidRecordPath } from '../state-paths.js';
 import { signDeploymentRecord } from '../sign-record.js';
+import {
+  isStatefulTarget,
+  DEFAULT_STATEFUL_CONFIG,
+  type StatefulDeployConfig,
+} from '../stateful-target.js';
 import {
   UnraidEmhttpClient,
   type AddContainerPayload,
@@ -33,6 +52,14 @@ import type {
   RollbackResult,
 } from '../types.js';
 import { validateParameters } from '../validate-parameters.js';
+import type { BackupVerificationResult } from '../../backup/types.js';
+import type { VerifyInput } from '../../backup/orchestrator.js';
+
+/**
+ * Minimal `verifyBackup` signature used by the backend. Injected via deps so
+ * tests can mock it without touching the filesystem.
+ */
+export type VerifyBackupFn = (input: VerifyInput) => Promise<BackupVerificationResult>;
 
 export const PARAM_SCHEMA: Record<string, ParamSchema> = {
   host_id: { type: 'string', required: true, format: 'identifier' },
@@ -64,6 +91,19 @@ export const PARAM_SCHEMA: Record<string, ParamSchema> = {
   },
   health_url: { type: 'string', required: false, format: 'url' },
   health_timeout_seconds: { type: 'number', default: 120, range: [10, 600] },
+  /**
+   * Optional role attribute (from the discovery role catalog, issue #28).
+   * When set to a stateful role (e.g. "database", "cache"), the deploy path
+   * activates storage-mount preservation + backup gating (issue #33).
+   * Invariant #62: role is a generic attribute, never a service name.
+   */
+  role: { type: 'string', required: false },
+  /**
+   * Optional backup platform key used when calling `verifyBackup`.
+   * Defaults to "unraid" when absent. Operators set this to match the
+   * platform string used by the backup engine (e.g. "postgres", "redis").
+   */
+  backup_platform: { type: 'string', required: false },
 };
 
 interface PreviousContainerCapture {
@@ -77,6 +117,17 @@ export interface UnraidBackendDeps {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   generateId?: () => string;
+  /**
+   * Optional `verifyBackup` override. Defaults to the real orchestrator
+   * function. Inject a mock in tests to avoid filesystem access.
+   */
+  verifyBackup?: VerifyBackupFn;
+  /**
+   * Optional stateful-deploy config. Defaults to `DEFAULT_STATEFUL_CONFIG`
+   * (requireBackup=true). Supply `{ requireBackup: false }` for admin bypass;
+   * this must be an EXPLICIT caller decision — never a silent default.
+   */
+  statefulConfig?: StatefulDeployConfig;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -109,6 +160,8 @@ export class UnraidHomelabBackend implements DeploymentBackend {
       sleep: deps.sleep ?? defaultSleep,
       now: deps.now ?? Date.now,
       generateId: deps.generateId ?? (() => `unraid-${Date.now().toString(36)}`),
+      verifyBackup: deps.verifyBackup ?? defaultVerifyBackup,
+      statefulConfig: deps.statefulConfig ?? DEFAULT_STATEFUL_CONFIG,
     };
   }
 
@@ -188,6 +241,8 @@ export class UnraidHomelabBackend implements DeploymentBackend {
     const params = validateParameters(rawParams, PARAM_SCHEMA);
     const hostId = params['host_id'] as string;
     const containerName = params['container_name'] as string;
+    const role = params['role'] as string | undefined;
+    const backupPlatform = (params['backup_platform'] as string | undefined) ?? 'unraid';
     const client = await this.deps.getClient(hostId);
 
     const storageMounts = (params['storage_mounts'] as StorageMount[] | undefined) ?? [];
@@ -206,6 +261,27 @@ export class UnraidHomelabBackend implements DeploymentBackend {
           });
         }
       }
+    }
+
+    // Stateful-awareness gate (issue #33).
+    // Detection is by role/attributes only — invariant #62.
+    // Note: storage_mounts with host_path entries trigger stateful classification.
+    const stateful = isStatefulTarget({ role, storage_mounts: storageMounts });
+    if (stateful && this.deps.statefulConfig.requireBackup) {
+      // Backup gate: BLOCK the deploy if no fresh verified backup exists.
+      // This mirrors the data-affecting path in src/safety/gate.ts — the same
+      // verifyBackup function is used, so the gate is not bypassed.
+      await this.deps.verifyBackup({
+        platform: backupPlatform,
+        target: containerName,
+        freshnessOverrides: this.deps.statefulConfig.backupFreshnessOverrides,
+      });
+      // Storage-mount preservation: existing mounts are NOT destroyed before
+      // the redeploy. We stop the old container (to release file locks), swap
+      // the image with addContainer, then start. The host_path directories
+      // remain intact because we never call rm -rf or equivalent on them.
+      // The emhttp API only manages container lifecycle — the underlying share
+      // data on the array is untouched.
     }
 
     // Capture the previous config before any destructive operation.
@@ -257,6 +333,7 @@ export class UnraidHomelabBackend implements DeploymentBackend {
       target: 'homelab-unraid',
       envName: env,
       artifactLocation: artifact.location,
+      stateful,
       details: {
         host_id: hostId,
         container_name: containerName,
@@ -264,6 +341,7 @@ export class UnraidHomelabBackend implements DeploymentBackend {
         digest: artifact.metadata['digest'] as string,
         previous_container_config: previousConfig,
         started_at: startedAt,
+        ...(stateful ? { backup_platform: backupPlatform } : {}),
       },
       deployedAt: startedAt,
     };
@@ -377,4 +455,13 @@ export class UnraidHomelabBackend implements DeploymentBackend {
       message: `container ${containerName} did not reach running within ${timeoutMs}ms`,
     });
   }
+}
+
+/**
+ * Default `verifyBackup` implementation: delegates to the real backup
+ * orchestrator. Imported lazily to avoid circular deps when mocked in tests.
+ */
+async function defaultVerifyBackup(input: VerifyInput): Promise<BackupVerificationResult> {
+  const { verifyBackup } = await import('../../backup/orchestrator.js');
+  return verifyBackup(input);
 }
