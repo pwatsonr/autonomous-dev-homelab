@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/pwatsonr/autonomous-dev/plugins/autonomous-dev/schemas/deploy-policy-v1.json",
+  "title": "Autonomous-Dev Deploy Policy Document v1",
+  "description": "Validates a deploy policy document: an ordered list of typed rules with target predicates and effects. Rules match on discovered attributes (tags/kind/env/capability) — never on hard-coded instance ids (invariant #674). Cross-reference: issues #668, #669.",
+  "type": "object",
+  "required": ["version", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "1.0",
+      "description": "Policy document format version. Currently '1.0'."
+    },
+    "rules": {
+      "type": "array",
+      "description": "Ordered list of policy rules. Evaluated top-to-bottom; deny-wins merge semantics.",
+      "items": { "$ref": "#/$defs/policyRule" },
+      "default": []
+    }
+  },
+  "$defs": {
+    "policyRule": {
+      "type": "object",
+      "required": ["id", "type", "effect", "params"],
+      "additionalProperties": false,
+      "description": "A single policy rule with an optional target predicate and a typed effect.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "description": "Unique stable rule identifier within the document (lowercase-kebab)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable explanation shown in CLI output and audit logs."
+        },
+        "when": {
+          "$ref": "#/$defs/targetPredicate",
+          "description": "Optional target predicate. When absent the rule matches every target."
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Rule-type discriminator. Open string — built-in types: placement, affinity, quota, blast-radius, maintenance-window. Plugins may register additional types."
+        },
+        "effect": {
+          "enum": ["allow", "deny", "require-approval"],
+          "description": "Outcome when this rule matches and its type-evaluator fires. Deny-wins merge semantics."
+        },
+        "params": {
+          "type": "object",
+          "description": "Rule-type-specific parameters. Validated and interpreted by the registered evaluator for this 'type' key."
+        }
+      }
+    },
+    "targetPredicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Predicate for matching a DeployTarget by discovered attributes. All fields are optional and ANDed. INVARIANT: never reference specific instance ids — use kind/env/tag/capability only (invariant #674).",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Match by exact target kind string (e.g., 'swarm-node', 'k3s-cluster')."
+        },
+        "env": {
+          "type": "string",
+          "description": "Match by logical environment (e.g., 'prod', 'staging')."
+        },
+        "tag": {
+          "type": "object",
+          "required": ["key", "value"],
+          "additionalProperties": false,
+          "description": "Match targets with this exact tag key=value pair.",
+          "properties": {
+            "key": { "type": "string", "description": "Tag key name." },
+            "value": { "type": "string", "description": "Tag value (exact match)." }
+          }
+        },
+        "capability": {
+          "type": "string",
+          "description": "Match targets that advertise this capability token."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "version": "1.0",
+      "rules": []
+    },
+    {
+      "version": "1.0",
+      "rules": [
+        {
+          "id": "gpu-placement",
+          "description": "ML services must deploy to GPU nodes",
+          "when": { "tag": { "key": "role", "value": "ml" } },
+          "type": "placement",
+          "effect": "deny",
+          "params": { "require": { "capability": "gpu" } }
+        },
+        {
+          "id": "prod-approval",
+          "description": "All prod deploys require senior-engineer approval",
+          "when": { "env": "prod" },
+          "type": "placement",
+          "effect": "require-approval",
+          "params": { "approvers": ["senior-engineers"] }
+        },
+        {
+          "id": "no-prod-deploys-on-weekends",
+          "description": "Prod deploys only allowed weekdays 06:00–22:00 UTC",
+          "when": { "env": "prod" },
+          "type": "maintenance-window",
+          "effect": "deny",
+          "params": { "allow": { "start": "06:00", "end": "22:00" } }
+        },
+        {
+          "id": "blast-radius-cap",
+          "description": "Limit single action to at most 3 targets",
+          "type": "blast-radius",
+          "effect": "deny",
+          "params": { "maxTargets": 3 }
+        }
+      ]
+    }
+  ]
+}

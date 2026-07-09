@@ -66,6 +66,7 @@ import { buildGrafanaCommand } from './commands/grafana.js';
 import { FetchGrafanaHttpSource } from '../observability/grafana.js';
 import { buildHealthCommand } from './commands/health.js';
 import { HealthScorer } from '../observability/health.js';
+import { buildRulesCommand } from './commands/rules.js';
 import { assembleRuntime } from '../live/bootstrap.js';
 import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
@@ -968,6 +969,24 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     healthHandle.command.hook('preAction', () => { handled = true; });
     healthHandle.command.hook('postAction', () => { exitCode = healthHandle.lastExitCode(); });
     program.addCommand(healthHandle.command);
+  }
+
+  // `rules` command group: show + export (issue #34).
+  // Derives homelab topology facts from the inventory graph and generates a
+  // deploy policy document for the core policy engine. Read-only; no writes
+  // to the graph. No admin gating — topology + policy derivation is safe for
+  // any operator to inspect.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+    const rulesGraphStore = new GraphStore(graphPath);
+    const rulesHandle = buildRulesCommand({
+      graphStore: rulesGraphStore,
+      streams,
+    });
+    rulesHandle.command.hook('preAction', () => { handled = true; });
+    rulesHandle.command.hook('postAction', () => { exitCode = rulesHandle.lastExitCode(); });
+    program.addCommand(rulesHandle.command);
   }
 
   try {
