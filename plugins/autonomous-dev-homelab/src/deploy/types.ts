@@ -92,6 +92,13 @@ export interface DeploymentRecordPayload {
   details: Record<string, unknown>;
   /** ISO-8601 timestamp of the successful deploy. */
   deployedAt: string;
+  /**
+   * True when the target was classified as stateful (issue #33). Stateful
+   * targets preserve their named volumes / persistent mounts across redeploys
+   * and require a verified backup before the deploy is allowed to proceed.
+   * Absent (undefined) for legacy records written before issue #33.
+   */
+  stateful?: boolean;
 }
 
 /**
