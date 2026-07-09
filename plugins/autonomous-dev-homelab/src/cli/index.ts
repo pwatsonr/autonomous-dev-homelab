@@ -64,10 +64,11 @@ import { buildBackupCommand } from './commands/backup.js';
 import { buildLogsCommand } from './commands/logs.js';
 import { LogsService, FetchLogsHttpSource } from '../observability/logs.js';
 import { buildGrafanaCommand } from './commands/grafana.js';
-import { FetchGrafanaHttpSource } from '../observability/grafana.js';
+import { FetchGrafanaHttpSource, GrafanaRegistry } from '../observability/grafana.js';
 import { buildHealthCommand } from './commands/health.js';
 import { HealthScorer } from '../observability/health.js';
 import { buildRulesCommand } from './commands/rules.js';
+import { buildObservabilityCommand } from './commands/observability.js';
 import { assembleRuntime } from '../live/bootstrap.js';
 import { runConnectTest } from './commands/connect.js';
 import { ObservationCollector } from '../observation/collector.js';
@@ -1005,6 +1006,37 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
     rulesHandle.command.hook('preAction', () => { handled = true; });
     rulesHandle.command.hook('postAction', () => { exitCode = rulesHandle.lastExitCode(); });
     program.addCommand(rulesHandle.command);
+  }
+
+  // `observability` command group: onboard (issue #41, invariant #62).
+  // Checks each service entity's metrics/logs/dashboard coverage generically
+  // and emits observability_gap observations for missing channels. Read-only;
+  // no mutations to external systems. Discovers Prometheus, Loki/OpenSearch,
+  // and Grafana endpoints generically from the inventory graph.
+  {
+    const dataDir = resolveDataDir(program.opts().dataDir as string | undefined, env);
+    const graphPath = path.join(dataDir, 'inventory-graph.yaml');
+    const obsGraphStore = new GraphStore(graphPath);
+    const obsLogsGraphStore = new GraphStore(graphPath);
+    const obsGrafanaGraphStore = new GraphStore(graphPath);
+    const obsLogsService = new LogsService({
+      http: new FetchLogsHttpSource(),
+      graphStore: obsLogsGraphStore,
+    });
+    const obsGrafanaRegistry = new GrafanaRegistry({
+      http: new FetchGrafanaHttpSource(),
+      graphStore: obsGrafanaGraphStore,
+      env,
+    });
+    const obsHandle = buildObservabilityCommand({
+      graphStore: obsGraphStore,
+      logsService: obsLogsService,
+      grafanaRegistry: obsGrafanaRegistry,
+      streams,
+    });
+    obsHandle.command.hook('preAction', () => { handled = true; });
+    obsHandle.command.hook('postAction', () => { exitCode = obsHandle.lastExitCode(); });
+    program.addCommand(obsHandle.command);
   }
 
   try {

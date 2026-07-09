@@ -94,7 +94,16 @@ export type FaultPattern =
    *   `deny`             → P0
    *   `require-approval` → P1
    */
-  | 'policy_drift';
+  | 'policy_drift'
+  /**
+   * Observability gap (issue #41, invariant #62): a discovered service is
+   * not fully wired into the observability stack — Prometheus metrics
+   * scraping, log queryability, or a Grafana dashboard is absent. One
+   * observation per gap channel per service. Details carry `entityId`,
+   * `entityName`, `channel` (metrics|logs|dashboards), and optional
+   * `proposal` text. Severity P2 — informational gap; non-fatal.
+   */
+  | 'observability_gap';
 
 export interface Observation {
   /** UUID v4. */
