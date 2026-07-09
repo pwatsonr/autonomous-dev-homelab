@@ -51,6 +51,7 @@ import { buildObserveCommand } from './commands/observe.js';
 import { buildLiveProbes } from '../observation/live-probes.js';
 import { AlertProbe, FetchAlertHttpSource } from '../observation/probes/alert.js';
 import { CapacityProbe } from '../observation/probes/capacity.js';
+import { PolicyDriftProbe } from '../observation/probes/policy-drift.js';
 import { buildSafetyCommand } from './commands/safety.js';
 import { buildCancelActionCommand } from './commands/cancel-action.js';
 import { buildMigrationsCommand } from './commands/migrations.js';
@@ -508,11 +509,28 @@ export async function runCli(opts: RunCliOptions): Promise<number> {
         // Graph construction or exec source failure — proceed without capacity probe.
         capacityProbe = undefined;
       }
+      // Build the policy-drift probe (issue #35) with its own graph store
+      // instance. The probe generates the homelab policy from the live graph
+      // and evaluates actual service placement against placement and affinity
+      // rules. Best-effort: any graph construction failure degrades to probe
+      // absent (scan returns []).
+      const driftGraphStore = new GraphStore(graphPath);
+      let policyDriftProbe: PolicyDriftProbe | undefined;
+      try {
+        policyDriftProbe = new PolicyDriftProbe({
+          platformId: primaryPlatformId,
+          graphStore: driftGraphStore,
+        });
+      } catch {
+        // Graph construction failure — proceed without policy-drift probe.
+        policyDriftProbe = undefined;
+      }
       liveProbes = buildLiveProbes(observeRuntime.config, {
         pool: observeRuntime.pool,
         alertProbe,
         datastoreHealthProbe,
         capacityProbe,
+        policyDriftProbe,
       });
     } catch {
       // Config absent, Vault unreachable, or other bootstrap error —

@@ -83,7 +83,18 @@ export type FaultPattern =
    * (default 7 days), even when current fill is below the warn threshold.
    * Severity P1.
    */
-  | 'capacity_growth';
+  | 'capacity_growth'
+  /**
+   * Policy drift (issue #35, invariant #62): the live placement of a
+   * service or workload violates an active homelab policy rule — e.g. a
+   * workload running on a manager node, two anti-affinity services
+   * co-located, or a media service on a non-GPU node. One observation per
+   * violation; details carry `rule_id`, `expected`, `observed`, and
+   * `resource`. Severity derives from the rule's effect:
+   *   `deny`             → P0
+   *   `require-approval` → P1
+   */
+  | 'policy_drift';
 
 export interface Observation {
   /** UUID v4. */

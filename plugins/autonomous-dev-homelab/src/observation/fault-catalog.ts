@@ -157,6 +157,16 @@ export const FAULT_CATALOG: Readonly<Record<FaultPattern, FaultCatalogEntry>> =
       default_request_type: 'infra',
       destructiveness: 'data-affecting',
     },
+    // Policy-drift pattern (issue #35, invariant #62)
+    policy_drift: {
+      pattern: 'policy_drift',
+      detection:
+        'policy-drift probe: live service/workload placement evaluated against generated homelab ' +
+        'policy rules; violation emitted when placement contradicts a placement or affinity rule',
+      severity: 'P1',
+      default_request_type: 'infra',
+      destructiveness: 'reversible',
+    },
     // Capacity / fill-rate patterns (issue #44, invariant #62)
     capacity_warning: {
       pattern: 'capacity_warning',

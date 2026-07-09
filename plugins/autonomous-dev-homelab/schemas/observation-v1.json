@@ -31,7 +31,8 @@
         "datastore_disk_pressure",
         "capacity_warning",
         "capacity_critical",
-        "capacity_growth"
+        "capacity_growth",
+        "policy_drift"
       ]
     },
     "resource": { "type": "string", "minLength": 1 },
