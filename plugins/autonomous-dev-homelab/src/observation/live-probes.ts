@@ -7,10 +7,11 @@
  * - unraid → 1× unraidArrayHealthProbe + 1× unraidPoolHealthProbe (in that order)
  * - When `alertProbe` is supplied, it is appended after host probes (issue #37).
  * - When `datastoreHealthProbe` is supplied, it is appended after alertProbe (issue #43).
- * - When `capacityProbe` is supplied, it is appended last (issue #44).
+ * - When `capacityProbe` is supplied, it is appended after datastoreHealthProbe (issue #44).
+ * - When `policyDriftProbe` is supplied, it is appended last (issue #35).
  *
  * Ordering MUST match config.hosts ordering, with alertProbe, datastoreHealthProbe,
- * then capacityProbe appended last.
+ * capacityProbe, then policyDriftProbe appended last.
  *
  * When `pool` is supplied, each probe receives a real exec source backed by
  * that host's connection from the pool. When `pool` is absent (unit tests),
@@ -50,13 +51,23 @@ export interface BuildLiveProbesOptions {
   datastoreHealthProbe?: Probe;
   /**
    * Optional capacity probe (issue #44, invariant #62). When provided, it is
-   * appended to the probe list last. The probe enumerates all capacity-bearing
-   * entities from the graph (storage-array, storage-disk, share, datastore,
-   * pool) and emits capacity_warning / capacity_critical / capacity_growth
-   * observations. Constructed by the caller with a graph store + pool-backed
-   * exec source. Omitted when the graph store is unavailable.
+   * appended to the probe list after the datastore health probe. The probe
+   * enumerates all capacity-bearing entities from the graph (storage-array,
+   * storage-disk, share, datastore, pool) and emits capacity_warning /
+   * capacity_critical / capacity_growth observations. Constructed by the caller
+   * with a graph store + pool-backed exec source. Omitted when the graph store
+   * is unavailable.
    */
   capacityProbe?: Probe;
+  /**
+   * Optional policy-drift probe (issue #35, invariant #62). When provided, it
+   * is appended last. The probe generates the homelab policy from the live
+   * graph, evaluates the actual service placement against placement and
+   * anti-affinity rules, and emits `policy_drift` observations for violations.
+   * Constructed by the caller with a graph store. Omitted when the graph store
+   * is unavailable.
+   */
+  policyDriftProbe?: Probe;
 }
 
 /**
@@ -80,13 +91,15 @@ function poolExecSource(hostname: string, pool: ConnectionPool): SwarmExecSource
 
 /**
  * Build the probe list from the homelab config.
- * Ordering matches config.hosts iteration order, with alertProbe then
- * datastoreHealthProbe appended last.
+ * Ordering matches config.hosts iteration order, with alertProbe,
+ * datastoreHealthProbe, capacityProbe, then policyDriftProbe appended last.
  *
  * @param config - The operator's homelab config (host list drives probe allocation).
  * @param opts - Optional; supply `pool` to inject live connection-backed exec sources,
  *               `alertProbe` to include the Prometheus/Alertmanager probe (issue #37),
- *               and/or `datastoreHealthProbe` to include the datastore health probe (#43).
+ *               `datastoreHealthProbe` to include the datastore health probe (#43),
+ *               `capacityProbe` for capacity observations (#44), and/or
+ *               `policyDriftProbe` for placement drift observations (#35).
  */
 export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOptions): Probe[] {
   const probes: Probe[] = [];
@@ -117,12 +130,21 @@ export function buildLiveProbes(config: HomelabConfig, opts?: BuildLiveProbesOpt
     probes.push(opts.datastoreHealthProbe);
   }
 
-  // Append the capacity probe last when provided (issue #44).
+  // Append the capacity probe after datastore health when provided (issue #44).
   // The probe enumerates all capacity-bearing graph entities and emits
   // fill-ratio + growth-rate observations. Appended after datastore health
   // so the collector runs storage-health checks before capacity checks.
   if (opts?.capacityProbe !== undefined) {
     probes.push(opts.capacityProbe);
+  }
+
+  // Append the policy-drift probe last when provided (issue #35).
+  // The probe generates the homelab policy from the live graph and evaluates
+  // actual service placement against placement and affinity rules, emitting
+  // policy_drift observations for any violations. Appended after capacity so
+  // structural (drift) checks run after operational (capacity) ones.
+  if (opts?.policyDriftProbe !== undefined) {
+    probes.push(opts.policyDriftProbe);
   }
 
   return probes;
