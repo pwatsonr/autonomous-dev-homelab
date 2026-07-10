@@ -31,21 +31,19 @@ export interface BackendMetadata {
  * the homelab backends actually use.
  */
 export interface ParamSchema {
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object';
+  type: "string" | "number" | "boolean" | "array" | "object";
   required?: boolean;
   default?: unknown;
   enum?: ReadonlyArray<string | number>;
   range?: readonly [number, number];
   regex?: RegExp;
   /** Friendly format hint used by validators (`url`, `path`, etc.). */
-  format?:
-    | 'identifier'
-    | 'shell-safe-arg'
-    | 'url'
-    | 'path'
-    | 'absolute-path';
+  format?: "identifier" | "shell-safe-arg" | "url" | "path" | "absolute-path";
   /** For arrays. */
-  items?: ParamSchema | { type: 'string'; regex?: RegExp } | { type: 'object'; properties: Record<string, ParamSchema> };
+  items?:
+    | ParamSchema
+    | { type: "string"; regex?: RegExp }
+    | { type: "object"; properties: Record<string, ParamSchema> };
   /** For objects with free-form keys (e.g. env-var maps). */
   additionalProperties?: ParamSchema;
   /** For typed object properties. */
@@ -99,6 +97,27 @@ export interface DeploymentRecordPayload {
    * Absent (undefined) for legacy records written before issue #33.
    */
   stateful?: boolean;
+  /**
+   * Opaque target identifier from the resolved `ResolvedContractTarget.id`
+   * (issue #665). Carried in the signed payload so the audit trail can
+   * correlate the record with the target that was resolved at dispatch time.
+   * Absent on legacy records written before issue #665.
+   */
+  targetId?: string;
+  /**
+   * Physical or logical deployment destination: `'cloud'` or `'homelab'`
+   * (issue #665). Determines which dispatch path was used.
+   * Absent on legacy records written before issue #665.
+   */
+  location?: "cloud" | "homelab";
+  /**
+   * Node identifier within the target cluster or homelab topology
+   * (issue #665). For homelab deploys this may be a Proxmox node name,
+   * a Swarm manager id, or a K3s node label — never a hard-coded instance
+   * name (invariant #674). Optional: absent when the backend routes at the
+   * cluster level and no specific node is resolved.
+   */
+  node?: string;
 }
 
 /**
@@ -112,7 +131,7 @@ export interface DeploymentRecord {
 
 export interface HealthCheckProbe {
   timestamp: string;
-  outcome: 'success' | 'failure';
+  outcome: "success" | "failure";
   latencyMs: number;
   /** Optional probe-specific reason (HTTP status, stderr, etc.). */
   detail?: string;
